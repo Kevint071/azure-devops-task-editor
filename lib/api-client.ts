@@ -7,6 +7,8 @@ import type {
   Assignee,
   BulkTaskResult,
   BulkUpdateFields,
+  CreateTaskResult,
+  NewTaskInput,
   PbiSummary,
   PerTaskFieldUpdate,
   TaskItem,
@@ -68,6 +70,30 @@ export function submitPerTaskUpdates(
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ updates }),
+  });
+}
+
+export function createTasks(
+  pat: string,
+  pbiId: string,
+  tasks: NewTaskInput[]
+): Promise<{ results: CreateTaskResult[] }> {
+  return apiRequest(pat, `/api/pbi/${encodeURIComponent(pbiId)}/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tasks }),
+  });
+}
+
+export function moveTasks(
+  pat: string,
+  taskIds: number[],
+  destinationPbiId: number
+): Promise<{ results: BulkTaskResult[] }> {
+  return apiRequest(pat, "/api/tasks/move", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ taskIds, destinationPbiId }),
   });
 }
 
