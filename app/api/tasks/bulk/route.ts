@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { adoRequest } from "@/lib/azure-devops/client";
 import { resolveAdoConfig, resolvePat } from "@/lib/azure-devops/session";
 import { AdoAuthError, extractTaskErrorMessage, toApiError } from "@/lib/azure-devops/errors";
-import type { BulkTaskResult, BulkUpdateFields } from "@/lib/types";
+import type { BulkTaskResult, BulkUpdateFields, PerTaskFieldUpdate } from "@/lib/types";
 
 const CONCURRENCY_LIMIT = 4;
 
@@ -15,12 +15,6 @@ interface JsonPatchOperation {
   op: "add";
   path: string;
   value: string | number;
-}
-
-interface PerTaskUpdate {
-  id: number;
-  originalEstimate?: number;
-  completedWork?: number;
 }
 
 function buildPatchOperations(fields: BulkUpdateFields): JsonPatchOperation[] {
@@ -48,18 +42,28 @@ function buildPatchOperations(fields: BulkUpdateFields): JsonPatchOperation[] {
   return operations;
 }
 
-function isValidPerTaskUpdate(value: unknown): value is PerTaskUpdate {
+function isOptionalNonEmptyString(value: unknown) {
+  return value === undefined || (typeof value === "string" && value.trim() !== "");
+}
+
+function isOptionalHours(value: unknown) {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value) && value >= 0);
+}
+
+function isValidPerTaskUpdate(value: unknown): value is PerTaskFieldUpdate {
   if (typeof value !== "object" || value === null) return false;
   const record = value as Record<string, unknown>;
   if (typeof record.id !== "number" || !Number.isFinite(record.id)) return false;
 
-  const hasOriginalEstimate = record.originalEstimate !== undefined;
-  const hasCompletedWork = record.completedWork !== undefined;
-  if (!hasOriginalEstimate && !hasCompletedWork) return false;
-  if (hasOriginalEstimate && typeof record.originalEstimate !== "number") return false;
-  if (hasCompletedWork && typeof record.completedWork !== "number") return false;
+  const fieldKeys = ["state", "assignedTo", "originalEstimate", "completedWork"] as const;
+  if (fieldKeys.every((key) => record[key] === undefined)) return false;
 
-  return true;
+  return (
+    isOptionalNonEmptyString(record.state) &&
+    isOptionalNonEmptyString(record.assignedTo) &&
+    isOptionalHours(record.originalEstimate) &&
+    isOptionalHours(record.completedWork)
+  );
 }
 
 async function applyPatches(
@@ -123,24 +127,21 @@ export async function PATCH(request: NextRequest) {
 
   const { org, project } = resolveAdoConfig(request);
 
-  // Per-task mode: each Task carries its own Original Estimate / Completed Work.
+  // Per-task mode: each Task carries its own field values.
   if (Array.isArray(payload.updates) && payload.updates.length > 0) {
     if (!payload.updates.every(isValidPerTaskUpdate)) {
       return NextResponse.json(
         {
           error:
-            "Each update must include a Task id and at least one of Original Estimate or Completed Work.",
+            "Each update must include a Task id and at least one field; hours must be numbers >= 0.",
         },
         { status: 400 }
       );
     }
 
-    const items = (payload.updates as PerTaskUpdate[]).map((update) => ({
-      id: update.id,
-      operations: buildPatchOperations({
-        originalEstimate: update.originalEstimate,
-        completedWork: update.completedWork,
-      }),
+    const items = (payload.updates as PerTaskFieldUpdate[]).map(({ id, ...fields }) => ({
+      id,
+      operations: buildPatchOperations(fields),
     }));
 
     const outcome = await applyPatches(pat, org, project, items);

@@ -28,9 +28,11 @@ export interface BulkUpdateFields {
   completedWork?: number;
 }
 
-// A per-task hours edit - unlike BulkUpdateFields, each task gets its own values.
+// A per-task edit - unlike BulkUpdateFields, each task gets its own values.
 export interface PerTaskFieldUpdate {
   id: number;
+  state?: string;
+  assignedTo?: string;
   originalEstimate?: number;
   completedWork?: number;
 }

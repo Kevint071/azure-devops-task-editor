@@ -8,6 +8,9 @@ import type { Assignee, PbiSummary, TaskItem } from "./types";
 
 export function usePbiLookup() {
   const [pbiId, setPbiId] = useState("");
+  // Id of the last successful lookup - Refresh reloads this PBI, not whatever
+  // is currently typed in the input.
+  const [lookedUpPbiId, setLookedUpPbiId] = useState("");
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lookupError, setLookupError] = useState<string | null>(null);
@@ -32,6 +35,7 @@ export function usePbiLookup() {
         fetchTaskStates(""),
         fetchAssignees(""),
       ]);
+      setLookedUpPbiId(pbiId.trim());
       setPbiInfo(pbiResult.pbi);
       setTasks(pbiResult.tasks);
       setTaskStates(statesResult.states);
@@ -44,13 +48,13 @@ export function usePbiLookup() {
   }
 
   async function handleRefresh(): Promise<TaskItem[] | null> {
-    if (pbiId.trim() === "") return null;
+    if (lookedUpPbiId === "") return null;
 
     setIsRefreshing(true);
     setLookupError(null);
 
     try {
-      const pbiResult = await fetchPbiTasks("", pbiId.trim());
+      const pbiResult = await fetchPbiTasks("", lookedUpPbiId);
       setPbiInfo(pbiResult.pbi);
       setTasks(pbiResult.tasks);
       return pbiResult.tasks;
@@ -65,6 +69,7 @@ export function usePbiLookup() {
   return {
     pbiId,
     setPbiId,
+    lookedUpPbiId,
     isLookingUp,
     isRefreshing,
     lookupError,
