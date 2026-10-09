@@ -9,6 +9,7 @@ import type { BulkTaskResult, PerTaskFieldUpdate, TaskItem } from "@/lib/types";
 import { ActionDock, CountBubble, PendingDot } from "@/app/components/ActionDock";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
 import { Avatar } from "@/app/components/Avatar";
+import { HoursInput } from "@/app/components/HoursInput";
 import { LoadingCard, PageBar, PageHero, PageShell } from "@/app/components/PageShell";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
 import { PbiSummaryCard } from "@/app/components/PbiSummaryCard";
@@ -796,19 +797,14 @@ export default function EditTasksPage() {
                         </Cell>
 
                         <Cell label="Estimate">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.5"
-                            aria-label={`Original Estimate for task #${task.id}`}
+                          <HoursInput
+                            ariaLabel={`Original Estimate for task #${task.id}`}
                             value={
                               estimateEditable
                                 ? draft?.originalEstimate ?? String(task.originalEstimate ?? "")
                                 : String(task.originalEstimate ?? "")
                             }
-                            onChange={(event) =>
-                              updateDraft(task.id, "originalEstimate", event.target.value)
-                            }
+                            onValueChange={(value) => updateDraft(task.id, "originalEstimate", value)}
                             disabled={!estimateEditable}
                             placeholder="—"
                             title={
@@ -826,15 +822,10 @@ export default function EditTasksPage() {
                         </Cell>
 
                         <Cell label="Completed">
-                          <input
-                            type="number"
-                            min={0}
-                            step="0.5"
-                            aria-label={`Completed Work for task #${task.id}`}
+                          <HoursInput
+                            ariaLabel={`Completed Work for task #${task.id}`}
                             value={draft?.completedWork ?? String(task.completedWork ?? "")}
-                            onChange={(event) =>
-                              updateDraft(task.id, "completedWork", event.target.value)
-                            }
+                            onValueChange={(value) => updateDraft(task.id, "completedWork", value)}
                             placeholder="—"
                             title={
                               update?.completedWork !== undefined
@@ -918,26 +909,20 @@ export default function EditTasksPage() {
                     />
                   </BulkField>
                   <BulkField label="Estimate" htmlFor="bulk-estimate">
-                    <input
+                    <HoursInput
                       id="bulk-estimate"
-                      type="number"
-                      min={0}
-                      step="0.5"
                       value={bulkEstimate}
-                      onChange={(event) => setBulkEstimate(event.target.value)}
+                      onValueChange={setBulkEstimate}
                       placeholder="—"
                       title="Only applies to Tasks in To Do or Done."
                       className={`${fieldClass(false, isInvalidHours(bulkEstimate), true)} tabular-nums`}
                     />
                   </BulkField>
                   <BulkField label="Completed" htmlFor="bulk-completed">
-                    <input
+                    <HoursInput
                       id="bulk-completed"
-                      type="number"
-                      min={0}
-                      step="0.5"
                       value={bulkCompleted}
-                      onChange={(event) => setBulkCompleted(event.target.value)}
+                      onValueChange={setBulkCompleted}
                       placeholder="—"
                       className={`${fieldClass(false, isInvalidHours(bulkCompleted), true)} tabular-nums`}
                     />

@@ -6,6 +6,7 @@ import { usePbiLookup } from "@/lib/use-pbi-lookup";
 import { useSessionInfo } from "@/lib/use-session-info";
 import { ActionDock, CountBubble } from "@/app/components/ActionDock";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
+import { HoursInput } from "@/app/components/HoursInput";
 import { LoadingCard, PageBar, PageHero, PageShell } from "@/app/components/PageShell";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
 import { PbiSummaryCard } from "@/app/components/PbiSummaryCard";
@@ -404,28 +405,22 @@ export default function CreateTasksPage() {
                       {hoursAssignMode && (
                         <>
                           <Field label="Estimate" htmlFor={`draft-estimate-${draft.tempId}`}>
-                            <input
+                            <HoursInput
                               id={`draft-estimate-${draft.tempId}`}
-                              type="number"
-                              min={0}
-                              step="0.5"
                               value={draft.originalEstimate}
-                              onChange={(event) =>
-                                updateDraftTask(draft.tempId, { originalEstimate: event.target.value })
+                              onValueChange={(value) =>
+                                updateDraftTask(draft.tempId, { originalEstimate: value })
                               }
                               placeholder="—"
                               className={`${boxedFieldClass} tabular-nums`}
                             />
                           </Field>
                           <Field label="Completed" htmlFor={`draft-worked-${draft.tempId}`}>
-                            <input
+                            <HoursInput
                               id={`draft-worked-${draft.tempId}`}
-                              type="number"
-                              min={0}
-                              step="0.5"
                               value={draft.completedWork}
-                              onChange={(event) =>
-                                updateDraftTask(draft.tempId, { completedWork: event.target.value })
+                              onValueChange={(value) =>
+                                updateDraftTask(draft.tempId, { completedWork: value })
                               }
                               placeholder="—"
                               className={`${boxedFieldClass} tabular-nums`}

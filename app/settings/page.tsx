@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { clearSession, fetchSessionInfo, saveSession } from "@/lib/api-client";
 import { PageHero, PageShell } from "@/app/components/PageShell";
+import { ThemeToggle } from "@/app/components/ThemeToggle";
 import { AlertIcon, CheckIcon, EyeIcon, EyeOffIcon, SpinnerIcon } from "@/app/components/icons";
 import {
   boxedFieldClass,
@@ -200,6 +201,19 @@ export default function SettingsPage() {
           )}
         </div>
       </form>
+
+      <section
+        className={`mx-auto mt-4 flex w-full max-w-xl animate-fade-up flex-wrap items-center justify-between gap-4 p-6 ${cardClass}`}
+        style={{ animationDelay: "200ms" }}
+      >
+        <div>
+          <h2 className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">Appearance</h2>
+          <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
+            System follows your device setting.
+          </p>
+        </div>
+        <ThemeToggle />
+      </section>
     </PageShell>
   );
 }
