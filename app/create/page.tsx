@@ -1,18 +1,31 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { createTasks } from "@/lib/api-client";
 import { usePbiLookup } from "@/lib/use-pbi-lookup";
 import { useSessionInfo } from "@/lib/use-session-info";
+import { ActionDock, CountBubble } from "@/app/components/ActionDock";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
+import { LoadingCard, PageBar, PageHero, PageShell } from "@/app/components/PageShell";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
+import { PbiSummaryCard } from "@/app/components/PbiSummaryCard";
 import {
   PathSelect,
   areaOptions,
   iterationOptions,
   shortPath,
 } from "@/app/components/PathSelect";
+import { ResultBanner } from "@/app/components/ResultBanner";
 import { SettingsPrompt } from "@/app/components/SettingsPrompt";
+import { AlertIcon, ChevronUpIcon, PlusIcon, SpinnerIcon, TrashIcon } from "@/app/components/icons";
+import {
+  boxedFieldClass,
+  cardClass,
+  darkButtonClass,
+  fieldLabelClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "@/app/components/styles";
 
 // Empty areaPath / iterationPath means "inherit from the parent PBI".
 interface DraftTask {
@@ -27,14 +40,32 @@ interface DraftTask {
   error?: string;
 }
 
+const CREATE_HINTS = [
+  { title: "Stage first", text: "Add as many Tasks as you need." },
+  { title: "Set once", text: "Apply State, Assignee or paths to all." },
+  { title: "Create together", text: "One click sends them to Azure DevOps." },
+];
+
+function Field({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <label htmlFor={htmlFor} className={fieldLabelClass}>
+        {label}
+      </label>
+      {children}
+    </div>
+  );
+}
+
 export default function CreateTasksPage() {
-  const { isConfigured } = useSessionInfo();
+  const { sessionInfo, isConfigured } = useSessionInfo();
   const {
     pbiId,
     setPbiId,
     isLookingUp,
     lookupError,
     pbiInfo,
+    tasks,
     taskStates,
     assignees,
     areas,
@@ -46,7 +77,10 @@ export default function CreateTasksPage() {
   const teamIterationOptions = useMemo(() => iterationOptions(iterations), [iterations]);
 
   const [draftTasks, setDraftTasks] = useState<DraftTask[]>([]);
+  // The newest draft's title gets focus when it mounts.
+  const [lastAddedId, setLastAddedId] = useState<string | null>(null);
   const [hoursAssignMode, setHoursAssignMode] = useState(false);
+  const [isApplyOpen, setIsApplyOpen] = useState(false);
   const [stateValue, setStateValue] = useState("");
   const [assigneeValue, setAssigneeValue] = useState("");
   const [areaValue, setAreaValue] = useState("");
@@ -55,8 +89,9 @@ export default function CreateTasksPage() {
   const [createTasksError, setCreateTasksError] = useState<string | null>(null);
   const [createdCount, setCreatedCount] = useState(0);
 
-  const canCreateTasks =
-    draftTasks.length > 0 && draftTasks.every((draft) => draft.title.trim() !== "") && !isCreatingTasks;
+  const hasOpenPbi = isLookingUp || tasks !== null;
+  const hasUntitledDraft = draftTasks.some((draft) => draft.title.trim() === "");
+  const canCreateTasks = draftTasks.length > 0 && !hasUntitledDraft && !isCreatingTasks;
   const hasAnyFieldSet =
     stateValue !== "" || assigneeValue !== "" || areaValue !== "" || iterationValue !== "";
   const inheritedAreaLabel = pbiInfo?.areaPath
@@ -66,6 +101,7 @@ export default function CreateTasksPage() {
     ? `(from PBI: ${shortPath(pbiInfo.iterationPath)})`
     : "(from PBI)";
   const canApplyToDrafts = draftTasks.length > 0 && hasAnyFieldSet;
+  const showDock = hasOpenPbi && !isLookingUp && draftTasks.length > 0;
 
   async function handleLookupAndReset() {
     setDraftTasks([]);
@@ -75,10 +111,12 @@ export default function CreateTasksPage() {
   }
 
   function addDraftTask() {
+    const tempId = crypto.randomUUID();
+    setLastAddedId(tempId);
     setDraftTasks((previous) => [
       ...previous,
       {
-        tempId: crypto.randomUUID(),
+        tempId,
         title: "",
         state: "",
         assignedTo: "",
@@ -161,97 +199,169 @@ export default function CreateTasksPage() {
     }
   }
 
+  const lookupBar = (size: "hero" | "compact") => (
+    <PbiLookupBar
+      size={size}
+      pbiId={pbiId}
+      onPbiIdChange={setPbiId}
+      onLookup={handleLookupAndReset}
+      isLookingUp={isLookingUp}
+      canLookUp={canLookUp}
+      lookupError={lookupError}
+    />
+  );
+
   return (
-    <div className="flex flex-1 justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="mx-auto flex w-full max-w-3xl flex-col gap-8 px-6 py-12">
-        <header>
-          <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Create Tasks</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Look up a PBI, stage as many new child Tasks as you need, then create them all at
-            once - nothing is sent to Azure DevOps until you press Create Tasks.
+    <PageShell isLanding={!hasOpenPbi} hasDock={showDock}>
+      {hasOpenPbi ? (
+        <PageBar title="Create Tasks">{lookupBar("compact")}</PageBar>
+      ) : (
+        <PageHero
+          title="Create Tasks"
+          description="Look up a PBI, stage as many new child Tasks as you need, then create them all at once. Nothing reaches Azure DevOps until you press Create."
+          hints={isConfigured ? CREATE_HINTS : undefined}
+        >
+          {sessionInfo && (isConfigured ? lookupBar("hero") : <SettingsPrompt />)}
+        </PageHero>
+      )}
+
+      {isLookingUp && <LoadingCard />}
+
+      {pbiInfo && tasks && !isLookingUp && (
+        <PbiSummaryCard pbi={pbiInfo}>
+          <p className="mt-4 text-sm text-zinc-500 dark:text-zinc-400">
+            Already has{" "}
+            <strong className="font-semibold text-zinc-950 tabular-nums dark:text-zinc-50">
+              {tasks.length}
+            </strong>{" "}
+            child Task{tasks.length === 1 ? "" : "s"}. New Tasks inherit its Area and Iteration
+            unless you pick others.
           </p>
-        </header>
+        </PbiSummaryCard>
+      )}
 
-        {isConfigured ? (
-          <PbiLookupBar
-            pbiId={pbiId}
-            onPbiIdChange={setPbiId}
-            onLookup={handleLookupAndReset}
-            isLookingUp={isLookingUp}
-            canLookUp={canLookUp}
-            pbiInfo={pbiInfo}
-            lookupError={lookupError}
-          />
-        ) : (
-          <SettingsPrompt />
-        )}
+      {createdCount > 0 && !isLookingUp && (
+        <ResultBanner
+          tone="success"
+          title={`Created ${createdCount} Task${createdCount === 1 ? "" : "s"}`}
+          onDismiss={() => setCreatedCount(0)}
+        >
+          {draftTasks.length > 0
+            ? "The ones that failed stay below with their error, ready to fix and retry."
+            : "They are in Azure DevOps under this PBI."}
+        </ResultBanner>
+      )}
 
-        {pbiInfo && (
-          <section className="flex flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
-              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                New Tasks (not yet created)
-              </p>
-              <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2">
-                  <input
-                    id="hours-assign-mode"
-                    type="checkbox"
-                    checked={hoursAssignMode}
-                    onChange={toggleHoursAssignMode}
-                  />
-                  <label htmlFor="hours-assign-mode" className="text-sm font-medium text-black dark:text-zinc-50">
-                    Assign hours per task
-                  </label>
-                </div>
-                <button
-                  type="button"
-                  onClick={addDraftTask}
-                  className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium text-black dark:border-zinc-700 dark:text-zinc-50"
+      {pbiInfo && tasks && !isLookingUp && (
+        <section className={`animate-fade-up ${cardClass}`} style={{ animationDelay: "80ms" }}>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+            <h2 className="flex items-center gap-2 text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+              New Tasks
+              {draftTasks.length > 0 && (
+                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-600 tabular-nums dark:bg-zinc-800 dark:text-zinc-300">
+                  {draftTasks.length}
+                </span>
+              )}
+            </h2>
+            <div className="ml-auto flex items-center gap-3">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={hoursAssignMode}
+                onClick={toggleHoursAssignMode}
+                className="group inline-flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300"
+              >
+                <span
+                  className={`relative inline-flex h-5 w-9 shrink-0 rounded-full transition-colors duration-200 ${
+                    hoursAssignMode ? "bg-brand" : "bg-zinc-200 dark:bg-zinc-700"
+                  }`}
                 >
-                  + Add Task
-                </button>
-              </div>
+                  <span
+                    className={`absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform duration-200 ${
+                      hoursAssignMode ? "translate-x-4" : ""
+                    }`}
+                  />
+                </span>
+                Hours per Task
+              </button>
+              <button type="button" onClick={addDraftTask} className={secondaryButtonClass}>
+                <PlusIcon className="size-4" />
+                Add Task
+              </button>
             </div>
+          </div>
 
-            {draftTasks.length === 0 ? (
-              <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                No new Tasks staged yet. Click &quot;+ Add Task&quot; to start one.
+          {draftTasks.length === 0 ? (
+            <div className="flex flex-col items-center px-6 py-14 text-center">
+              <div className="flex size-12 items-center justify-center rounded-2xl bg-brand/10 text-brand dark:text-sky-300">
+                <PlusIcon className="size-5" />
+              </div>
+              <p className="mt-4 text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                No new Tasks yet
               </p>
-            ) : (
-              <>
-                <ul className="flex flex-col gap-2">
-                  {draftTasks.map((draft) => (
-                    <li
-                      key={draft.tempId}
-                      className="flex flex-col gap-2 rounded border border-zinc-200 p-2 dark:border-zinc-800 sm:flex-row sm:flex-wrap sm:items-start"
-                    >
-                      <div className="flex flex-1 flex-col gap-1">
-                        <label className="sr-only" htmlFor={`draft-title-${draft.tempId}`}>
-                          New Task title
-                        </label>
-                        <input
-                          id={`draft-title-${draft.tempId}`}
-                          type="text"
-                          value={draft.title}
-                          onChange={(event) => updateDraftTask(draft.tempId, { title: event.target.value })}
-                          placeholder="Task title"
-                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                        />
-                        {draft.error && (
-                          <p className="text-xs text-red-600 dark:text-red-400">{draft.error}</p>
-                        )}
-                      </div>
+              <p className="mt-1 max-w-sm text-sm text-zinc-500 dark:text-zinc-400">
+                Add one and type its title. Press Enter in a title to add the next one.
+              </p>
+              <button type="button" onClick={addDraftTask} className={`mt-5 ${primaryButtonClass}`}>
+                <PlusIcon className="size-4" />
+                Add first Task
+              </button>
+            </div>
+          ) : (
+            <>
+              <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+                {draftTasks.map((draft) => (
+                  <li
+                    key={draft.tempId}
+                    className={`relative flex animate-fade-up flex-col gap-3 px-4 py-4 ${
+                      draft.error
+                        ? "before:absolute before:inset-y-0 before:left-0 before:w-0.75 before:bg-red-500 before:content-['']"
+                        : ""
+                    }`}
+                  >
+                    <div className="flex items-start gap-2">
+                      <label className="sr-only" htmlFor={`draft-title-${draft.tempId}`}>
+                        New Task title
+                      </label>
+                      <input
+                        id={`draft-title-${draft.tempId}`}
+                        type="text"
+                        autoFocus={draft.tempId === lastAddedId}
+                        value={draft.title}
+                        onChange={(event) => updateDraftTask(draft.tempId, { title: event.target.value })}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" && draft.title.trim() !== "") {
+                            event.preventDefault();
+                            addDraftTask();
+                          }
+                        }}
+                        placeholder="What needs to be done?"
+                        className={`${boxedFieldClass} py-2 text-base font-medium`}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeDraftTask(draft.tempId)}
+                        aria-label="Remove new Task"
+                        title="Remove"
+                        className="mt-1 rounded-lg p-2 text-zinc-400 transition hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+                      >
+                        <TrashIcon className="size-4" />
+                      </button>
+                    </div>
 
-                      <div className="flex flex-col gap-1 sm:w-40">
-                        <label className="sr-only" htmlFor={`draft-state-${draft.tempId}`}>
-                          New Task state
-                        </label>
+                    <div
+                      className={`grid grid-cols-2 gap-3 pr-11 ${
+                        hoursAssignMode
+                          ? "sm:grid-cols-3 lg:grid-cols-[1fr_1.3fr_1fr_1.2fr_90px_90px]"
+                          : "lg:grid-cols-4"
+                      }`}
+                    >
+                      <Field label="State" htmlFor={`draft-state-${draft.tempId}`}>
                         <select
                           id={`draft-state-${draft.tempId}`}
                           value={draft.state}
                           onChange={(event) => updateDraftTask(draft.tempId, { state: event.target.value })}
-                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                          className={boxedFieldClass}
                         >
                           <option value="">(default)</option>
                           {taskStates.map((state) => (
@@ -260,27 +370,40 @@ export default function CreateTasksPage() {
                             </option>
                           ))}
                         </select>
-                      </div>
-
-                      <div className="flex flex-col gap-1 sm:w-48">
-                        <label className="sr-only" htmlFor={`draft-assignee-${draft.tempId}`}>
-                          New Task assignee
-                        </label>
+                      </Field>
+                      <Field label="Assignee" htmlFor={`draft-assignee-${draft.tempId}`}>
                         <AssigneeCombobox
                           id={`draft-assignee-${draft.tempId}`}
                           assignees={assignees}
                           value={draft.assignedTo}
                           onChange={(uniqueName) => updateDraftTask(draft.tempId, { assignedTo: uniqueName })}
                           placeholder="Unassigned"
+                          inputClassName={boxedFieldClass}
                         />
-                      </div>
-
+                      </Field>
+                      <Field label="Area" htmlFor={`draft-area-${draft.tempId}`}>
+                        <PathSelect
+                          id={`draft-area-${draft.tempId}`}
+                          value={draft.areaPath}
+                          onChange={(path) => updateDraftTask(draft.tempId, { areaPath: path })}
+                          options={teamAreaOptions}
+                          emptyLabel={inheritedAreaLabel}
+                          className={boxedFieldClass}
+                        />
+                      </Field>
+                      <Field label="Iteration" htmlFor={`draft-iteration-${draft.tempId}`}>
+                        <PathSelect
+                          id={`draft-iteration-${draft.tempId}`}
+                          value={draft.iterationPath}
+                          onChange={(path) => updateDraftTask(draft.tempId, { iterationPath: path })}
+                          options={teamIterationOptions}
+                          emptyLabel={inheritedIterationLabel}
+                          className={boxedFieldClass}
+                        />
+                      </Field>
                       {hoursAssignMode && (
                         <>
-                          <div className="flex flex-col gap-1 sm:w-24">
-                            <label className="sr-only" htmlFor={`draft-estimate-${draft.tempId}`}>
-                              New Task original estimate
-                            </label>
+                          <Field label="Estimate" htmlFor={`draft-estimate-${draft.tempId}`}>
                             <input
                               id={`draft-estimate-${draft.tempId}`}
                               type="number"
@@ -290,15 +413,11 @@ export default function CreateTasksPage() {
                               onChange={(event) =>
                                 updateDraftTask(draft.tempId, { originalEstimate: event.target.value })
                               }
-                              placeholder="Est"
-                              className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                              placeholder="—"
+                              className={`${boxedFieldClass} tabular-nums`}
                             />
-                          </div>
-
-                          <div className="flex flex-col gap-1 sm:w-24">
-                            <label className="sr-only" htmlFor={`draft-worked-${draft.tempId}`}>
-                              New Task completed work
-                            </label>
+                          </Field>
+                          <Field label="Completed" htmlFor={`draft-worked-${draft.tempId}`}>
                             <input
                               id={`draft-worked-${draft.tempId}`}
                               type="number"
@@ -308,55 +427,58 @@ export default function CreateTasksPage() {
                               onChange={(event) =>
                                 updateDraftTask(draft.tempId, { completedWork: event.target.value })
                               }
-                              placeholder="Worked"
-                              className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                              placeholder="—"
+                              className={`${boxedFieldClass} tabular-nums`}
                             />
-                          </div>
+                          </Field>
                         </>
                       )}
+                    </div>
 
-                      <button
-                        type="button"
-                        onClick={() => removeDraftTask(draft.tempId)}
-                        aria-label="Remove new Task"
-                        className="self-start rounded px-2 py-1.5 text-sm font-medium text-zinc-500 hover:text-red-600 dark:text-zinc-400 dark:hover:text-red-400"
-                      >
-                        ✕
-                      </button>
+                    {draft.error && (
+                      <p className="flex animate-fade-up items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+                        <AlertIcon className="size-3.5 shrink-0" />
+                        {draft.error}
+                      </p>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <div className="border-t border-zinc-100 p-3 dark:border-zinc-900">
+                <button
+                  type="button"
+                  onClick={addDraftTask}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 py-2.5 text-sm font-medium text-zinc-500 transition hover:border-brand hover:bg-brand/5 hover:text-brand dark:border-zinc-700 dark:text-zinc-400 dark:hover:text-sky-300"
+                >
+                  <PlusIcon className="size-4" />
+                  Add another Task
+                </button>
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
-                      {/* basis-full wraps Area/Iteration onto their own line so the main row doesn't get wider */}
-                      <div className="grid grid-cols-1 gap-2 sm:basis-full sm:grid-cols-2">
-                        <PathSelect
-                          ariaLabel="New Task area"
-                          value={draft.areaPath}
-                          onChange={(path) => updateDraftTask(draft.tempId, { areaPath: path })}
-                          options={teamAreaOptions}
-                          emptyLabel={inheritedAreaLabel}
-                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                        />
-                        <PathSelect
-                          ariaLabel="New Task iteration"
-                          value={draft.iterationPath}
-                          onChange={(path) => updateDraftTask(draft.tempId, { iterationPath: path })}
-                          options={teamIterationOptions}
-                          emptyLabel={inheritedIterationLabel}
-                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                        />
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-
-                <div className="grid grid-cols-1 gap-4 border-t border-zinc-200 pt-4 sm:grid-cols-2 dark:border-zinc-800">
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="state" className="text-sm font-medium text-black dark:text-zinc-50">
-                      State
-                    </label>
+      {showDock && (
+        <ActionDock
+          panel={
+            isApplyOpen ? (
+              <>
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                    Set for all {draftTasks.length} new Task(s)
+                  </p>
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Only the fields you set change.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 lg:grid-cols-[1fr_1.3fr_1fr_1fr_auto] lg:items-end">
+                  <Field label="State" htmlFor="state">
                     <select
                       id="state"
                       value={stateValue}
                       onChange={(event) => setStateValue(event.target.value)}
-                      className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                      className={boxedFieldClass}
                     >
                       <option value="">(unchanged)</option>
                       {taskStates.map((state) => (
@@ -365,84 +487,90 @@ export default function CreateTasksPage() {
                         </option>
                       ))}
                     </select>
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="assignee" className="text-sm font-medium text-black dark:text-zinc-50">
-                      Assignee
-                    </label>
+                  </Field>
+                  <Field label="Assignee" htmlFor="assignee">
                     <AssigneeCombobox
                       id="assignee"
                       assignees={assignees}
                       value={assigneeValue}
                       onChange={setAssigneeValue}
-                      placeholder="(unchanged) - type a name…"
+                      placeholder="(unchanged)"
+                      dropUp
+                      inputClassName={boxedFieldClass}
                     />
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="area" className="text-sm font-medium text-black dark:text-zinc-50">
-                      Area
-                    </label>
+                  </Field>
+                  <Field label="Area" htmlFor="area">
                     <PathSelect
                       id="area"
                       value={areaValue}
                       onChange={setAreaValue}
                       options={teamAreaOptions}
                       emptyLabel="(unchanged)"
-                      className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                      className={boxedFieldClass}
                     />
-                  </div>
-
-                  <div className="flex flex-col gap-1">
-                    <label htmlFor="iteration" className="text-sm font-medium text-black dark:text-zinc-50">
-                      Iteration
-                    </label>
+                  </Field>
+                  <Field label="Iteration" htmlFor="iteration">
                     <PathSelect
                       id="iteration"
                       value={iterationValue}
                       onChange={setIterationValue}
                       options={teamIterationOptions}
                       emptyLabel="(unchanged)"
-                      className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                      className={boxedFieldClass}
                     />
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={handleCreateTasks}
-                    disabled={!canCreateTasks}
-                    className="h-10 rounded bg-black px-4 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-black"
-                  >
-                    {isCreatingTasks ? "Creating…" : "Create Tasks"}
-                  </button>
-
+                  </Field>
                   <button
                     type="button"
                     onClick={handleApplyToDrafts}
                     disabled={!canApplyToDrafts}
-                    className="h-10 rounded border border-black px-4 text-sm font-medium text-black disabled:opacity-40 dark:border-white dark:text-white"
+                    className={`${darkButtonClass} col-span-2 lg:col-span-1`}
                   >
-                    Apply to new Tasks
+                    Apply
                   </button>
                 </div>
-
-                {createTasksError && (
-                  <p className="text-sm text-red-600 dark:text-red-400">{createTasksError}</p>
-                )}
               </>
-            )}
+            ) : undefined
+          }
+        >
+          <div className="flex items-center gap-1.5">
+            <CountBubble count={draftTasks.length} />
+            <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">new Task(s)</span>
+            <button
+              type="button"
+              onClick={() => setIsApplyOpen((open) => !open)}
+              aria-expanded={isApplyOpen}
+              className="ml-1 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand transition hover:bg-brand/10 dark:text-sky-300"
+            >
+              {isApplyOpen ? "Hide set for all" : "Set for all"}
+              <ChevronUpIcon
+                className={`size-3.5 transition-transform duration-200 ${isApplyOpen ? "rotate-180" : ""}`}
+              />
+            </button>
+          </div>
 
-            {createdCount > 0 && (
-              <p className="text-sm text-green-700 dark:text-green-400">
-                Created {createdCount} Task{createdCount === 1 ? "" : "s"}.
-              </p>
+          <div className="ml-auto flex flex-wrap items-center gap-3">
+            {hasUntitledDraft && (
+              <span className="text-xs text-amber-700 dark:text-amber-400">Every Task needs a title.</span>
             )}
-          </section>
-        )}
-      </main>
-    </div>
+            <button
+              type="button"
+              onClick={handleCreateTasks}
+              disabled={!canCreateTasks}
+              className={primaryButtonClass}
+            >
+              {isCreatingTasks ? <SpinnerIcon className="size-4 animate-spin" /> : <PlusIcon className="size-4" />}
+              {isCreatingTasks ? "Creating" : `Create ${draftTasks.length} Task${draftTasks.length === 1 ? "" : "s"}`}
+            </button>
+          </div>
+
+          {createTasksError && (
+            <p className="flex w-full items-center gap-1.5 text-xs text-red-600 dark:text-red-400">
+              <AlertIcon className="size-3.5 shrink-0" />
+              {createTasksError}
+            </p>
+          )}
+        </ActionDock>
+      )}
+    </PageShell>
   );
 }

@@ -1,14 +1,31 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import Link from "next/link";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { submitPerTaskUpdates } from "@/lib/api-client";
 import { usePbiLookup } from "@/lib/use-pbi-lookup";
 import { useSessionInfo } from "@/lib/use-session-info";
 import type { BulkTaskResult, PerTaskFieldUpdate, TaskItem } from "@/lib/types";
+import { ActionDock, CountBubble, PendingDot } from "@/app/components/ActionDock";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
+import { Avatar } from "@/app/components/Avatar";
+import { LoadingCard, PageBar, PageHero, PageShell } from "@/app/components/PageShell";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
+import { PbiSummaryCard } from "@/app/components/PbiSummaryCard";
 import { PathSelect, areaOptions, iterationOptions } from "@/app/components/PathSelect";
+import { ResultBanner } from "@/app/components/ResultBanner";
 import { SettingsPrompt } from "@/app/components/SettingsPrompt";
+import { isDoneState, stateTone } from "@/app/components/StateBadge";
+import { AlertIcon, CheckIcon, ChevronUpIcon, RefreshIcon, SpinnerIcon } from "@/app/components/icons";
+import {
+  boxedFieldClass,
+  cardClass,
+  darkButtonClass,
+  fieldClass,
+  ghostButtonClass,
+  primaryButtonClass,
+  secondaryButtonClass,
+} from "@/app/components/styles";
 
 // Pending, unsaved edits for one Task. Hours are kept as the raw input text so
 // the field can be cleared while typing; empty means "unchanged".
@@ -81,20 +98,39 @@ function matchesAssigneeFilter(task: TaskItem, filter: string) {
   return task.assignedToUniqueName === filter;
 }
 
-const inputBaseClass =
-  "w-full rounded border bg-white px-2 py-1 text-sm text-black dark:bg-zinc-900 dark:text-zinc-50";
-const inputDefaultClass = "border-zinc-300 dark:border-zinc-700";
-const inputChangedClass = "border-amber-500 bg-amber-50 dark:border-amber-600 dark:bg-amber-950";
-const inputInvalidClass = "border-red-500 dark:border-red-700";
+const EDIT_HINTS = [
+  { title: "Edit in place", text: "Click any cell to change it." },
+  { title: "Fill many at once", text: "Select rows, set values once." },
+  { title: "Save once", text: "Review highlighted changes first." },
+];
 
-function cellInputClass(isChanged: boolean, isInvalid = false) {
-  return `${inputBaseClass} ${
-    isInvalid ? inputInvalidClass : isChanged ? inputChangedClass : inputDefaultClass
-  }`;
+function formatHours(hours: number) {
+  return `${Number.isInteger(hours) ? hours : hours.toFixed(1)} h`;
+}
+
+// One table cell. Below xl the header row is hidden, so each cell shows its own label.
+function Cell({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col justify-center gap-1 xl:h-full xl:min-h-9">
+      <span className="text-xs font-medium text-zinc-500 xl:hidden dark:text-zinc-400">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function BulkField({ label, htmlFor, children }: { label: string; htmlFor: string; children: ReactNode }) {
+  return (
+    <div className="flex min-w-0 flex-col gap-1">
+      <label htmlFor={htmlFor} className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
+        {label}
+      </label>
+      {children}
+    </div>
+  );
 }
 
 export default function EditTasksPage() {
-  const { isConfigured } = useSessionInfo();
+  const { sessionInfo, isConfigured } = useSessionInfo();
   const {
     pbiId,
     setPbiId,
@@ -126,11 +162,12 @@ export default function EditTasksPage() {
   const [bulkCompleted, setBulkCompleted] = useState("");
   const [bulkArea, setBulkArea] = useState("");
   const [bulkIteration, setBulkIteration] = useState("");
+  const [isBulkCollapsed, setIsBulkCollapsed] = useState(false);
   const [fillNotice, setFillNotice] = useState<string | null>(null);
 
   const [taskColumnWidth, setTaskColumnWidth] = useState(260);
   const taskColumnResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const taskGridTemplateColumns = `28px minmax(${taskColumnWidth}px, 1fr) 130px 190px 180px 180px 90px 90px`;
+  const taskGridTemplateColumns = `28px minmax(${taskColumnWidth}px, 1fr) 140px 190px 140px 180px 80px 90px`;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -167,6 +204,7 @@ export default function EditTasksPage() {
 
   const allSelected =
     filteredTasks.length > 0 && selectedVisibleTasks.length === filteredTasks.length;
+  const someSelected = selectedVisibleTasks.length > 0 && !allSelected;
 
   const pendingUpdates = useMemo(
     () =>
@@ -200,6 +238,14 @@ export default function EditTasksPage() {
     bulkIteration !== "";
   const hasInvalidBulkHours = isInvalidHours(bulkEstimate) || isInvalidHours(bulkCompleted);
   const canFill = selectedVisibleTasks.length > 0 && hasBulkValue && !hasInvalidBulkHours;
+  // The dock appears only when there is something to act on.
+  const showActionBar =
+    tasks !== null &&
+    tasks.length > 0 &&
+    (selectedVisibleTasks.length > 0 || pendingUpdates.length > 0 || submitError !== null);
+  const isBulkPanelOpen = selectedVisibleTasks.length > 0 && !isBulkCollapsed;
+  // Landing (centered hero) until a lookup starts; a failed lookup goes back to it.
+  const hasOpenPbi = isLookingUp || tasks !== null;
 
   const failedById = useMemo(
     () =>
@@ -210,6 +256,26 @@ export default function EditTasksPage() {
       ),
     [results]
   );
+
+  const totals = useMemo(() => {
+    if (!tasks) return null;
+    let estimate = 0;
+    let completed = 0;
+    let done = 0;
+    for (const task of tasks) {
+      estimate += task.originalEstimate ?? 0;
+      completed += task.completedWork ?? 0;
+      if (isDoneState(task.state)) done += 1;
+    }
+    return { estimate, completed, done };
+  }, [tasks]);
+  const donePercent =
+    tasks && totals && tasks.length > 0 ? Math.round((totals.done / tasks.length) * 100) : 0;
+
+  function assigneeName(uniqueName: string | null | undefined, fallback: string | null) {
+    if (!uniqueName) return fallback;
+    return assignees.find((assignee) => assignee.uniqueName === uniqueName)?.displayName ?? fallback;
+  }
 
   function handleTaskColumnResizeMove(event: MouseEvent) {
     const resizeState = taskColumnResizeRef.current;
@@ -371,176 +437,292 @@ export default function EditTasksPage() {
     setFillNotice(null);
   }
 
+  const failedResults = (results ?? []).filter((result) => !result.success);
+  const savedCount = (results ?? []).length - failedResults.length;
+
+  const lookupBar = (size: "hero" | "compact") => (
+    <PbiLookupBar
+      size={size}
+      pbiId={pbiId}
+      onPbiIdChange={setPbiId}
+      onLookup={handleLookupAndReset}
+      isLookingUp={isLookingUp}
+      canLookUp={canLookUp}
+      lookupError={lookupError}
+    />
+  );
+
   return (
-    <div className="flex flex-1 justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex w-full max-w-6xl flex-col gap-8 px-6 py-12">
-        <div className="mx-auto flex w-full max-w-3xl flex-col gap-8">
-          <header>
-            <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Edit Tasks</h1>
-            <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-              Look up a PBI and edit its child Tasks directly in the table, or select several and
-              fill the same values on all of them. Nothing is sent to Azure DevOps until you save.
-            </p>
-          </header>
+    <PageShell isLanding={!hasOpenPbi} hasDock={showActionBar}>
+      {hasOpenPbi ? (
+        <PageBar title="Edit Tasks">{lookupBar("compact")}</PageBar>
+      ) : (
+        <PageHero
+          title="Edit Tasks"
+          description="Look up a PBI and change its Tasks right in the table, or select several and fill them at once. Nothing reaches Azure DevOps until you save."
+          hints={isConfigured ? EDIT_HINTS : undefined}
+        >
+          {sessionInfo && (isConfigured ? lookupBar("hero") : <SettingsPrompt />)}
+        </PageHero>
+      )}
 
-          {isConfigured ? (
-            <PbiLookupBar
-              pbiId={pbiId}
-              onPbiIdChange={setPbiId}
-              onLookup={handleLookupAndReset}
-              isLookingUp={isLookingUp}
-              canLookUp={canLookUp}
-              pbiInfo={pbiInfo}
-              lookupError={lookupError}
-            />
-          ) : (
-            <SettingsPrompt />
-          )}
-        </div>
+      {isLookingUp && <LoadingCard />}
 
-        {tasks && (
-          <section className="flex flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            {assigneeFilterOptions.length > 0 && (
-              <div className="flex flex-wrap items-center gap-2 border-b border-zinc-200 pb-3 dark:border-zinc-800">
-                <span className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  Filter by assignee:
+      {pbiInfo && tasks && !isLookingUp && (
+        <PbiSummaryCard
+          pbi={pbiInfo}
+          action={
+            <button
+              type="button"
+              onClick={handleRefreshAndPrune}
+              disabled={isRefreshing || lookedUpPbiId === ""}
+              className={secondaryButtonClass}
+            >
+              <RefreshIcon className={`size-4 ${isRefreshing ? "animate-spin" : ""}`} />
+              {isRefreshing ? "Refreshing" : "Refresh"}
+            </button>
+          }
+        >
+          {tasks.length > 0 && totals && (
+            <div className="mt-5 flex flex-col gap-2">
+              <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+                <span className="text-zinc-600 dark:text-zinc-400">
+                  <strong className="font-semibold text-zinc-950 tabular-nums dark:text-zinc-50">
+                    {totals.done} of {tasks.length}
+                  </strong>{" "}
+                  Tasks done
                 </span>
-                <button
-                  type="button"
-                  onClick={() => changeAssigneeFilter("")}
-                  className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                    assigneeFilter === ""
-                      ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                      : "border-zinc-300 text-zinc-700 hover:border-black dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-white"
-                  }`}
-                >
-                  All ({tasks.length})
-                </button>
-                {assigneeFilterOptions.map((option) => {
-                  const count = tasks.filter((task) => matchesAssigneeFilter(task, option.uniqueName)).length;
-                  const isActive = assigneeFilter === option.uniqueName;
-                  return (
+                <span className="text-zinc-500 tabular-nums dark:text-zinc-400">
+                  {formatHours(totals.completed)} completed of {formatHours(totals.estimate)} estimated
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+                <div
+                  className="h-full origin-left animate-grow-x rounded-full bg-emerald-500 transition-[width] duration-700 ease-out"
+                  style={{ width: `${donePercent}%` }}
+                />
+              </div>
+            </div>
+          )}
+        </PbiSummaryCard>
+      )}
+
+      {results && (
+        <ResultBanner
+          tone={failedResults.length > 0 ? "error" : "success"}
+          title={
+            failedResults.length === 0
+              ? `Saved ${savedCount} Task(s)`
+              : `Saved ${savedCount} of ${results.length} Task(s)`
+          }
+          onDismiss={() => setResults(null)}
+        >
+          {failedResults.length === 0 ? (
+            "All changes are in Azure DevOps."
+          ) : (
+            <ul className="flex flex-col gap-0.5 text-red-700 dark:text-red-300">
+              {failedResults.map((result) => (
+                <li key={result.id}>
+                  #{result.id}
+                  {result.title ? ` ${result.title}` : ""}: {result.error}
+                </li>
+              ))}
+            </ul>
+          )}
+        </ResultBanner>
+      )}
+
+      {tasks && !isLookingUp && (
+        <section
+          className={`animate-fade-up overflow-hidden ${cardClass}`}
+          style={{ animationDelay: "80ms" }}
+        >
+          {tasks.length === 0 ? (
+            <div className="flex flex-col items-center px-6 py-14 text-center">
+              <p className="text-base font-semibold text-zinc-950 dark:text-zinc-50">
+                This PBI has no child Tasks yet
+              </p>
+              <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
+                Add some first, then come back to edit them here.
+              </p>
+              <Link href="/create" className={`mt-4 ${primaryButtonClass}`}>
+                Create Tasks
+              </Link>
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-zinc-200 px-4 py-3 dark:border-zinc-800">
+                <label className="flex cursor-pointer items-center gap-2.5 text-sm font-medium text-zinc-900 select-none dark:text-zinc-100">
+                  <input
+                    type="checkbox"
+                    checked={allSelected}
+                    ref={(element) => {
+                      if (element) element.indeterminate = someSelected;
+                    }}
+                    onChange={toggleSelectAll}
+                    className="size-4 cursor-pointer accent-brand"
+                  />
+                  {selectedVisibleTasks.length > 0
+                    ? `${selectedVisibleTasks.length} of ${filteredTasks.length} selected`
+                    : "Select all"}
+                </label>
+
+                {assigneeFilterOptions.length > 0 && (
+                  <div
+                    role="group"
+                    aria-label="Filter by assignee"
+                    className="flex flex-wrap items-center gap-1.5 sm:ml-auto"
+                  >
                     <button
-                      key={option.uniqueName}
                       type="button"
-                      onClick={() => changeAssigneeFilter(isActive ? "" : option.uniqueName)}
-                      className={`rounded-full border px-3 py-1 text-xs font-medium ${
-                        isActive
-                          ? "border-black bg-black text-white dark:border-white dark:bg-white dark:text-black"
-                          : "border-zinc-300 text-zinc-700 hover:border-black dark:border-zinc-700 dark:text-zinc-300 dark:hover:border-white"
+                      onClick={() => changeAssigneeFilter("")}
+                      aria-pressed={assigneeFilter === ""}
+                      className={`inline-flex h-7 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors ${
+                        assigneeFilter === ""
+                          ? "border-brand bg-brand text-white"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
                       }`}
                     >
-                      {option.displayName} ({count})
+                      All
+                      <span className={assigneeFilter === "" ? "text-white/75" : "text-zinc-400"}>
+                        {tasks.length}
+                      </span>
                     </button>
-                  );
-                })}
-              </div>
-            )}
-
-            <div className="flex items-center justify-between gap-2 border-b border-zinc-200 pb-2 dark:border-zinc-800">
-              <div className="flex items-center gap-2">
-                <input
-                  id="select-all"
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={toggleSelectAll}
-                />
-                <label htmlFor="select-all" className="text-sm font-medium text-black dark:text-zinc-50">
-                  Select all
-                </label>
-                <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                  ({selectedVisibleTasks.length} selected)
-                </span>
-              </div>
-
-              <button
-                type="button"
-                onClick={handleRefreshAndPrune}
-                disabled={isRefreshing || lookedUpPbiId === ""}
-                className="rounded border border-zinc-300 px-3 py-1.5 text-sm font-medium text-black disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-50"
-              >
-                {isRefreshing ? "Refreshing…" : "Refresh"}
-              </button>
-            </div>
-
-            {tasks.length === 0 ? (
-              <p className="text-sm text-zinc-600 dark:text-zinc-300">
-                This PBI has no child Tasks yet - use Create Tasks to add one.
-              </p>
-            ) : (
-              <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
-                <div
-                  className="grid min-w-300 items-center gap-x-3 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
-                  style={{ gridTemplateColumns: taskGridTemplateColumns }}
-                >
-                  <span />
-                  <span className="relative pr-2">
-                    Task
-                    {/* drag handle to resize the Task column like an Excel column border */}
-                    <div
-                      onMouseDown={handleTaskColumnResizeStart}
-                      className="absolute -right-1 top-1/2 z-10 h-4 w-2 -translate-y-1/2 cursor-col-resize select-none rounded hover:bg-zinc-400 dark:hover:bg-zinc-500"
-                    />
-                  </span>
-                  <span>State</span>
-                  <span>Assignee</span>
-                  <span>Area</span>
-                  <span>Iteration</span>
-                  <span>Estimate</span>
-                  <span>Completed</span>
-                </div>
-
-                {filteredTasks.length === 0 && (
-                  <p className="px-3 py-3 text-sm text-zinc-500 dark:text-zinc-400">
-                    No Tasks match this assignee filter.
-                  </p>
+                    {assigneeFilterOptions.map((option) => {
+                      const count = tasks.filter((task) =>
+                        matchesAssigneeFilter(task, option.uniqueName)
+                      ).length;
+                      const isActive = assigneeFilter === option.uniqueName;
+                      const isUnassigned = option.uniqueName === UNASSIGNED_FILTER;
+                      return (
+                        <button
+                          key={option.uniqueName}
+                          type="button"
+                          onClick={() => changeAssigneeFilter(isActive ? "" : option.uniqueName)}
+                          aria-pressed={isActive}
+                          className={`inline-flex h-7 items-center gap-1.5 rounded-full border pr-3 pl-1 text-xs font-medium transition-colors ${
+                            isActive
+                              ? "border-brand bg-brand text-white"
+                              : "border-zinc-200 bg-white text-zinc-700 hover:border-zinc-300 hover:bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-300 dark:hover:bg-zinc-900"
+                          }`}
+                        >
+                          <Avatar name={isUnassigned ? null : option.displayName} size="xs" />
+                          {option.displayName}
+                          <span className={isActive ? "text-white/75" : "text-zinc-400"}>{count}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
                 )}
+              </div>
 
-                <ul className="flex min-w-300 flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
-                  {filteredTasks.map((task) => {
-                    const draft = drafts[task.id];
-                    const update = buildUpdate(task, draft);
-                    const estimateEditable = canEditOriginalEstimate(task.state);
-                    const rowError = failedById.get(task.id);
-                    const stateOptions = taskStates.includes(task.state)
-                      ? taskStates
-                      : [task.state, ...taskStates];
-                    const assigneeKnown = assignees.some(
-                      (assignee) => assignee.uniqueName === task.assignedToUniqueName
-                    );
+              <div
+                className="group/header hidden items-center gap-x-3 border-b border-zinc-200 bg-zinc-50/70 px-4 py-2.5 text-xs font-medium text-zinc-500 xl:grid dark:border-zinc-800 dark:bg-zinc-900/40 dark:text-zinc-400"
+                style={{ gridTemplateColumns: taskGridTemplateColumns }}
+              >
+                <span />
+                <span className="relative">
+                  Task
+                  {/* drag handle to resize the Task column like an Excel column border */}
+                  <div
+                    onMouseDown={handleTaskColumnResizeStart}
+                    title="Drag to resize"
+                    className="absolute top-1/2 -right-2 z-10 h-5 w-1.5 -translate-y-1/2 cursor-col-resize rounded-full bg-zinc-300 opacity-0 transition-opacity select-none group-hover/header:opacity-70 hover:opacity-100 dark:bg-zinc-600"
+                  />
+                </span>
+                <span className="pl-1">State</span>
+                <span className="pl-9">Assignee</span>
+                <span className="pl-2.5">Area</span>
+                <span className="pl-2.5">Iteration</span>
+                <span className="pr-2.5 text-right">Estimate</span>
+                <span className="pr-2.5 text-right">Completed</span>
+              </div>
 
-                    return (
-                      <li
-                        key={task.id}
-                        className={`grid gap-x-3 px-3 py-2 text-sm ${
-                          update ? "bg-amber-50/40 dark:bg-amber-950/20" : ""
-                        }`}
-                        style={{ gridTemplateColumns: taskGridTemplateColumns }}
-                      >
-                        {/* h-full + min-h keeps every cell centered across the full row height, so short columns don't leave a gap next to a wrapped title */}
-                        <div className="flex h-full min-h-8.5 items-center">
+              {filteredTasks.length === 0 && (
+                <p className="px-4 py-6 text-sm text-zinc-500 dark:text-zinc-400">
+                  No Tasks match this assignee filter.
+                </p>
+              )}
+
+              <ul className="flex flex-col divide-y divide-zinc-100 dark:divide-zinc-900">
+                {filteredTasks.map((task, index) => {
+                  const draft = drafts[task.id];
+                  const update = buildUpdate(task, draft);
+                  const estimateEditable = canEditOriginalEstimate(task.state);
+                  const rowError = failedById.get(task.id);
+                  const isSelected = selectedIds.has(task.id);
+                  const currentState = draft?.state ?? task.state;
+                  const stateOptions = taskStates.includes(task.state)
+                    ? taskStates
+                    : [task.state, ...taskStates];
+                  const assigneeKnown = assignees.some(
+                    (assignee) => assignee.uniqueName === task.assignedToUniqueName
+                  );
+                  const currentAssigneeName = draft?.assignedTo
+                    ? assigneeName(draft.assignedTo, task.assignedTo)
+                    : task.assignedTo;
+
+                  return (
+                    <li
+                      key={task.id}
+                      className={`relative flex animate-fade-up flex-col gap-3 px-4 py-4 text-sm transition-colors xl:grid xl:items-center xl:gap-x-3 xl:py-2 ${
+                        isSelected
+                          ? "bg-brand/5 dark:bg-brand/10"
+                          : "xl:hover:bg-zinc-50/80 dark:xl:hover:bg-zinc-900/40"
+                      } ${
+                        update
+                          ? "before:absolute before:inset-y-0 before:left-0 before:w-0.75 before:origin-top before:animate-grow-y before:bg-amber-400 before:content-['']"
+                          : ""
+                      }`}
+                      style={{
+                        gridTemplateColumns: taskGridTemplateColumns,
+                        animationDelay: `${120 + Math.min(index, 14) * 35}ms`,
+                      }}
+                    >
+                      {/* xl:contents puts these cells straight on the table grid; below xl they stack as a card. */}
+                      <div className="flex items-start gap-3 xl:contents">
+                        <div className="flex pt-0.5 xl:h-full xl:min-h-9 xl:items-center xl:pt-0">
                           <input
                             type="checkbox"
                             aria-label={`Select task #${task.id}`}
-                            checked={selectedIds.has(task.id)}
+                            checked={isSelected}
                             onChange={() => toggleTask(task.id)}
+                            className="size-4 cursor-pointer accent-brand"
                           />
                         </div>
-                        <div className="flex h-full min-h-8.5 min-w-0 flex-col justify-center">
-                          <p className="min-w-0 whitespace-normal wrap-break-word font-medium text-black dark:text-zinc-50">
-                            #{task.id} - {task.title}
+                        <div className="flex min-w-0 flex-1 flex-col justify-center gap-1 xl:h-full xl:min-h-9">
+                          <p className="min-w-0 wrap-break-word text-zinc-900 dark:text-zinc-100">
+                            <span className="mr-1.5 text-xs font-medium text-zinc-400 tabular-nums dark:text-zinc-500">
+                              #{task.id}
+                            </span>
+                            <span className="font-medium">{task.title}</span>
+                            {update && (
+                              <span className="ml-2 inline-block animate-pop rounded-full bg-amber-100 px-1.5 py-px align-middle text-[11px] font-medium text-amber-800 dark:bg-amber-900/50 dark:text-amber-200">
+                                Edited
+                              </span>
+                            )}
                           </p>
                           {rowError && (
-                            <p className="text-xs text-red-600 dark:text-red-400">{rowError}</p>
+                            <p className="flex animate-fade-up items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                              <AlertIcon className="size-3.5 shrink-0" />
+                              {rowError}
+                            </p>
                           )}
                         </div>
-                        <div className="flex h-full min-h-8.5 items-center">
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-3 pl-7 sm:grid-cols-3 lg:grid-cols-[1fr_1.4fr_1fr_1.3fr_0.6fr_0.6fr] xl:contents">
+                        <Cell label="State">
                           <select
                             aria-label={`State for task #${task.id}`}
-                            value={draft?.state ?? task.state}
+                            value={currentState}
                             onChange={(event) => updateDraft(task.id, "state", event.target.value)}
                             title={update?.state !== undefined ? `Was: ${task.state}` : undefined}
-                            className={cellInputClass(update?.state !== undefined)}
+                            className={`w-full cursor-pointer rounded-full border px-3 py-1 text-xs font-medium outline-none transition focus:ring-2 focus:ring-brand/30 ${stateTone(currentState)} ${
+                              update?.state !== undefined
+                                ? "ring-2 ring-amber-400 ring-offset-1 ring-offset-white dark:ring-offset-zinc-950"
+                                : ""
+                            }`}
                           >
                             {stateOptions.map((state) => (
                               <option key={state} value={state}>
@@ -548,37 +730,44 @@ export default function EditTasksPage() {
                               </option>
                             ))}
                           </select>
-                        </div>
-                        <div className="flex h-full min-h-8.5 items-center">
-                          <select
-                            aria-label={`Assignee for task #${task.id}`}
-                            value={draft?.assignedTo || task.assignedToUniqueName || ""}
-                            onChange={(event) => updateDraft(task.id, "assignedTo", event.target.value)}
-                            title={
-                              update?.assignedTo !== undefined
-                                ? `Was: ${task.assignedTo ?? "Unassigned"}`
-                                : undefined
-                            }
-                            className={cellInputClass(update?.assignedTo !== undefined)}
-                          >
-                            {!task.assignedToUniqueName && (
-                              <option value="" disabled>
-                                Unassigned
-                              </option>
-                            )}
-                            {task.assignedToUniqueName && !assigneeKnown && (
-                              <option value={task.assignedToUniqueName}>
-                                {task.assignedTo ?? task.assignedToUniqueName}
-                              </option>
-                            )}
-                            {assignees.map((assignee) => (
-                              <option key={assignee.uniqueName} value={assignee.uniqueName}>
-                                {assignee.displayName}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="flex h-full min-h-8.5 items-center">
+                        </Cell>
+
+                        <Cell label="Assignee">
+                          <div className="flex min-w-0 items-center gap-2">
+                            <Avatar name={currentAssigneeName} />
+                            <select
+                              aria-label={`Assignee for task #${task.id}`}
+                              value={draft?.assignedTo || task.assignedToUniqueName || ""}
+                              onChange={(event) =>
+                                updateDraft(task.id, "assignedTo", event.target.value)
+                              }
+                              title={
+                                update?.assignedTo !== undefined
+                                  ? `Was: ${task.assignedTo ?? "Unassigned"}`
+                                  : undefined
+                              }
+                              className={fieldClass(update?.assignedTo !== undefined)}
+                            >
+                              {!task.assignedToUniqueName && (
+                                <option value="" disabled>
+                                  Unassigned
+                                </option>
+                              )}
+                              {task.assignedToUniqueName && !assigneeKnown && (
+                                <option value={task.assignedToUniqueName}>
+                                  {task.assignedTo ?? task.assignedToUniqueName}
+                                </option>
+                              )}
+                              {assignees.map((assignee) => (
+                                <option key={assignee.uniqueName} value={assignee.uniqueName}>
+                                  {assignee.displayName}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                        </Cell>
+
+                        <Cell label="Area">
                           <PathSelect
                             ariaLabel={`Area for task #${task.id}`}
                             value={draft?.areaPath || task.areaPath}
@@ -587,10 +776,11 @@ export default function EditTasksPage() {
                             title={
                               update?.areaPath !== undefined ? `Was: ${task.areaPath}` : undefined
                             }
-                            className={cellInputClass(update?.areaPath !== undefined)}
+                            className={fieldClass(update?.areaPath !== undefined)}
                           />
-                        </div>
-                        <div className="flex h-full min-h-8.5 items-center">
+                        </Cell>
+
+                        <Cell label="Iteration">
                           <PathSelect
                             ariaLabel={`Iteration for task #${task.id}`}
                             value={draft?.iterationPath || task.iterationPath}
@@ -601,10 +791,11 @@ export default function EditTasksPage() {
                                 ? `Was: ${task.iterationPath}`
                                 : undefined
                             }
-                            className={cellInputClass(update?.iterationPath !== undefined)}
+                            className={fieldClass(update?.iterationPath !== undefined)}
                           />
-                        </div>
-                        <div className="flex h-full min-h-8.5 items-center">
+                        </Cell>
+
+                        <Cell label="Estimate">
                           <input
                             type="number"
                             min={0}
@@ -627,13 +818,14 @@ export default function EditTasksPage() {
                                   ? `Was: ${task.originalEstimate ?? "—"}`
                                   : undefined
                             }
-                            className={`${cellInputClass(
+                            className={`${fieldClass(
                               update?.originalEstimate !== undefined,
                               estimateEditable && isInvalidHours(draft?.originalEstimate)
-                            )} disabled:cursor-not-allowed disabled:opacity-50`}
+                            )} text-right tabular-nums`}
                           />
-                        </div>
-                        <div className="flex h-full min-h-8.5 items-center">
+                        </Cell>
+
+                        <Cell label="Completed">
                           <input
                             type="number"
                             min={0}
@@ -649,191 +841,202 @@ export default function EditTasksPage() {
                                 ? `Was: ${task.completedWork ?? "—"}`
                                 : undefined
                             }
-                            className={cellInputClass(
+                            className={`${fieldClass(
                               update?.completedWork !== undefined,
                               isInvalidHours(draft?.completedWork)
-                            )}
+                            )} text-right tabular-nums`}
                           />
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </div>
-            )}
+                        </Cell>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </section>
+      )}
 
-            {tasks.length > 0 && (
+      {showActionBar && (
+        <ActionDock
+          panel={
+            isBulkPanelOpen ? (
               <>
-                <div className="flex flex-col gap-3 rounded border border-zinc-200 p-3 dark:border-zinc-800">
-                  <p className="text-sm font-medium text-black dark:text-zinc-50">
-                    Fill selected Tasks ({selectedVisibleTasks.length})
+                <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                  <p className="text-sm font-semibold text-zinc-950 dark:text-zinc-50">
+                    Fill {selectedVisibleTasks.length} selected Task(s)
                   </p>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_1.4fr_100px_100px]">
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-state" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        State
-                      </label>
-                      <select
-                        id="bulk-state"
-                        value={bulkState}
-                        onChange={(event) => setBulkState(event.target.value)}
-                        className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                      >
-                        <option value="">(unchanged)</option>
-                        {taskStates.map((state) => (
-                          <option key={state} value={state}>
-                            {state}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-assignee" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Assignee
-                      </label>
-                      <AssigneeCombobox
-                        id="bulk-assignee"
-                        assignees={assignees}
-                        value={bulkAssignee}
-                        onChange={setBulkAssignee}
-                        placeholder="(unchanged) - type a name…"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-estimate" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Estimate
-                      </label>
-                      <input
-                        id="bulk-estimate"
-                        type="number"
-                        min={0}
-                        step="0.5"
-                        value={bulkEstimate}
-                        onChange={(event) => setBulkEstimate(event.target.value)}
-                        placeholder="—"
-                        title="Only applies to Tasks in To Do or Done."
-                        className={`${cellInputClass(false, isInvalidHours(bulkEstimate))} py-2`}
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-completed" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Completed
-                      </label>
-                      <input
-                        id="bulk-completed"
-                        type="number"
-                        min={0}
-                        step="0.5"
-                        value={bulkCompleted}
-                        onChange={(event) => setBulkCompleted(event.target.value)}
-                        placeholder="—"
-                        className={`${cellInputClass(false, isInvalidHours(bulkCompleted))} py-2`}
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-area" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Area
-                      </label>
-                      <PathSelect
-                        id="bulk-area"
-                        value={bulkArea}
-                        onChange={setBulkArea}
-                        options={teamAreaOptions}
-                        emptyLabel="(unchanged)"
-                        className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                      />
-                    </div>
-                    <div className="flex flex-col gap-1">
-                      <label htmlFor="bulk-iteration" className="text-xs text-zinc-600 dark:text-zinc-400">
-                        Iteration
-                      </label>
-                      <PathSelect
-                        id="bulk-iteration"
-                        value={bulkIteration}
-                        onChange={setBulkIteration}
-                        options={teamIterationOptions}
-                        emptyLabel="(unchanged)"
-                        className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-                      />
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={handleFillSelected}
-                      disabled={!canFill}
-                      className="h-9 rounded border border-black px-4 text-sm font-medium text-black disabled:opacity-40 dark:border-white dark:text-white"
+                  <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                    Only the fields you set change. Review the highlighted cells, then save.
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-[1fr_1.3fr_1fr_1fr_88px_88px_auto] lg:items-end">
+                  <BulkField label="State" htmlFor="bulk-state">
+                    <select
+                      id="bulk-state"
+                      value={bulkState}
+                      onChange={(event) => setBulkState(event.target.value)}
+                      className={boxedFieldClass}
                     >
-                      Fill {selectedVisibleTasks.length} selected
-                    </button>
-                    <span className="text-xs text-zinc-500 dark:text-zinc-400">
-                      Fills the table only - review the highlighted cells, then save.
-                    </span>
-                  </div>
-                  {fillNotice && (
-                    <p className="text-xs text-amber-700 dark:text-amber-400">{fillNotice}</p>
-                  )}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-3 border-t border-zinc-200 pt-4 dark:border-zinc-800">
+                      <option value="">(unchanged)</option>
+                      {taskStates.map((state) => (
+                        <option key={state} value={state}>
+                          {state}
+                        </option>
+                      ))}
+                    </select>
+                  </BulkField>
+                  <BulkField label="Assignee" htmlFor="bulk-assignee">
+                    <AssigneeCombobox
+                      id="bulk-assignee"
+                      assignees={assignees}
+                      value={bulkAssignee}
+                      onChange={setBulkAssignee}
+                      placeholder="(unchanged)"
+                      dropUp
+                      inputClassName={boxedFieldClass}
+                    />
+                  </BulkField>
+                  <BulkField label="Area" htmlFor="bulk-area">
+                    <PathSelect
+                      id="bulk-area"
+                      value={bulkArea}
+                      onChange={setBulkArea}
+                      options={teamAreaOptions}
+                      emptyLabel="(unchanged)"
+                      className={boxedFieldClass}
+                    />
+                  </BulkField>
+                  <BulkField label="Iteration" htmlFor="bulk-iteration">
+                    <PathSelect
+                      id="bulk-iteration"
+                      value={bulkIteration}
+                      onChange={setBulkIteration}
+                      options={teamIterationOptions}
+                      emptyLabel="(unchanged)"
+                      className={boxedFieldClass}
+                    />
+                  </BulkField>
+                  <BulkField label="Estimate" htmlFor="bulk-estimate">
+                    <input
+                      id="bulk-estimate"
+                      type="number"
+                      min={0}
+                      step="0.5"
+                      value={bulkEstimate}
+                      onChange={(event) => setBulkEstimate(event.target.value)}
+                      placeholder="—"
+                      title="Only applies to Tasks in To Do or Done."
+                      className={`${fieldClass(false, isInvalidHours(bulkEstimate), true)} tabular-nums`}
+                    />
+                  </BulkField>
+                  <BulkField label="Completed" htmlFor="bulk-completed">
+                    <input
+                      id="bulk-completed"
+                      type="number"
+                      min={0}
+                      step="0.5"
+                      value={bulkCompleted}
+                      onChange={(event) => setBulkCompleted(event.target.value)}
+                      placeholder="—"
+                      className={`${fieldClass(false, isInvalidHours(bulkCompleted), true)} tabular-nums`}
+                    />
+                  </BulkField>
                   <button
                     type="button"
-                    onClick={handleSave}
-                    disabled={!canSave}
-                    className="h-10 rounded bg-black px-4 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-black"
+                    onClick={handleFillSelected}
+                    disabled={!canFill}
+                    className={`${darkButtonClass} max-sm:col-span-2 sm:col-span-3 lg:col-span-1`}
                   >
-                    {isSubmitting
-                      ? "Saving…"
-                      : `Save changes (${pendingUpdates.length} Task(s), ${pendingFieldCount} field(s))`}
+                    Apply
                   </button>
-                  <button
-                    type="button"
-                    onClick={handleDiscard}
-                    disabled={Object.keys(drafts).length === 0 || isSubmitting}
-                    className="h-10 rounded border border-zinc-300 px-4 text-sm font-medium text-black disabled:opacity-40 dark:border-zinc-700 dark:text-zinc-50"
-                  >
-                    Discard
-                  </button>
-                  {hiddenPendingCount > 0 && (
-                    <span className="text-xs text-amber-700 dark:text-amber-400">
-                      {hiddenPendingCount} Task(s) with changes are hidden by the filter.
-                    </span>
-                  )}
-                  {hasInvalidDraft && (
-                    <span className="text-xs text-red-600 dark:text-red-400">
-                      Hours must be numbers greater than or equal to 0.
-                    </span>
-                  )}
                 </div>
-
-                {submitError && (
-                  <p className="text-sm text-red-600 dark:text-red-400">{submitError}</p>
+                {fillNotice && (
+                  <p className="mt-3 flex animate-fade-up items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400">
+                    <AlertIcon className="size-3.5 shrink-0" />
+                    {fillNotice}
+                  </p>
                 )}
               </>
-            )}
-          </section>
-        )}
+            ) : undefined
+          }
+        >
+          {selectedVisibleTasks.length > 0 ? (
+            <div className="flex items-center gap-1.5">
+              <CountBubble count={selectedVisibleTasks.length} />
+              <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">selected</span>
+              <button
+                type="button"
+                onClick={() => setSelectedIds(new Set())}
+                className="ml-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 transition hover:bg-zinc-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800 dark:hover:text-zinc-100"
+              >
+                Clear
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsBulkCollapsed((collapsed) => !collapsed)}
+                aria-expanded={isBulkPanelOpen}
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-brand transition hover:bg-brand/10 dark:text-sky-300"
+              >
+                {isBulkPanelOpen ? "Hide bulk edit" : "Bulk edit"}
+                <ChevronUpIcon
+                  className={`size-3.5 transition-transform duration-200 ${isBulkPanelOpen ? "rotate-180" : ""}`}
+                />
+              </button>
+            </div>
+          ) : (
+            <span className="text-sm text-zinc-500 dark:text-zinc-400">
+              Select Tasks to fill them at once
+            </span>
+          )}
 
-        {results && (
-          <section className="flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-            <h2 className="text-sm font-medium text-black dark:text-zinc-50">Results</h2>
-            <ul className="flex flex-col gap-1 text-sm">
-              {results.map((result) => (
-                <li
-                  key={result.id}
-                  className={result.success ? "text-green-700 dark:text-green-400" : "text-red-600 dark:text-red-400"}
-                >
-                  #{result.id}
-                  {result.title ? ` ${result.title}` : ""}:{" "}
-                  {result.success ? "Updated" : `Failed - ${result.error}`}
-                </li>
-              ))}
-            </ul>
-          </section>
-        )}
-      </main>
-    </div>
+          <div className="ml-auto flex flex-wrap items-center gap-2">
+            {pendingUpdates.length > 0 && (
+              <span className="mr-1 inline-flex items-center gap-2 text-sm text-zinc-600 tabular-nums dark:text-zinc-300">
+                <PendingDot />
+                {pendingFieldCount} change(s) in {pendingUpdates.length} Task(s)
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={handleDiscard}
+              disabled={Object.keys(drafts).length === 0 || isSubmitting}
+              className={ghostButtonClass}
+            >
+              Discard
+            </button>
+            <button type="button" onClick={handleSave} disabled={!canSave} className={primaryButtonClass}>
+              {isSubmitting ? (
+                <SpinnerIcon className="size-4 animate-spin" />
+              ) : (
+                <CheckIcon className="size-4" />
+              )}
+              {isSubmitting ? "Saving" : "Save changes"}
+            </button>
+          </div>
+
+          {(hiddenPendingCount > 0 || hasInvalidDraft || submitError) && (
+            <div className="flex w-full flex-wrap gap-x-4 gap-y-1 text-xs">
+              {hiddenPendingCount > 0 && (
+                <span className="text-amber-700 dark:text-amber-400">
+                  {hiddenPendingCount} Task(s) with changes are hidden by the filter.
+                </span>
+              )}
+              {hasInvalidDraft && (
+                <span className="text-red-600 dark:text-red-400">
+                  Hours must be numbers greater than or equal to 0.
+                </span>
+              )}
+              {submitError && (
+                <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+                  <AlertIcon className="size-3.5 shrink-0" />
+                  {submitError}
+                </span>
+              )}
+            </div>
+          )}
+        </ActionDock>
+      )}
+    </PageShell>
   );
 }

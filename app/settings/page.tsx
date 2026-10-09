@@ -2,6 +2,16 @@
 
 import { useEffect, useState } from "react";
 import { clearSession, fetchSessionInfo, saveSession } from "@/lib/api-client";
+import { PageHero, PageShell } from "@/app/components/PageShell";
+import { AlertIcon, CheckIcon, EyeIcon, EyeOffIcon, SpinnerIcon } from "@/app/components/icons";
+import {
+  boxedFieldClass,
+  cardClass,
+  fieldLabelClass,
+  primaryButtonClass,
+} from "@/app/components/styles";
+
+const inputClass = `${boxedFieldClass} py-2`;
 
 export default function SettingsPage() {
   const [pat, setPat] = useState("");
@@ -9,6 +19,7 @@ export default function SettingsPage() {
   const [project, setProject] = useState("");
   const [team, setTeam] = useState("");
   const [hasStoredPat, setHasStoredPat] = useState(false);
+  const [showPat, setShowPat] = useState(false);
 
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -62,104 +73,133 @@ export default function SettingsPage() {
   }
 
   return (
-    <div className="flex flex-1 justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex w-full max-w-3xl flex-col gap-8 px-6 py-12">
-        <header>
-          <h1 className="text-2xl font-semibold text-black dark:text-zinc-50">Settings</h1>
-          <p className="mt-1 text-sm text-zinc-600 dark:text-zinc-300">
-            Save your Azure DevOps credentials once - Create Tasks, Edit Tasks and Move Tasks all
-            use this connection, you&apos;ll only need to enter a PBI id on those pages.
-          </p>
-        </header>
+    <PageShell isLanding width="narrow">
+      <PageHero
+        title="Connect to Azure DevOps"
+        description="Save your connection once. Create, Edit and Move Tasks all use it, so on those pages you only type a PBI id."
+      />
 
-        <section className="flex flex-col gap-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950">
-          <div className="flex flex-col gap-1">
-            <label htmlFor="pat" className="text-sm font-medium text-black dark:text-zinc-50">
-              Personal Access Token
-            </label>
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleSave();
+        }}
+        className={`mx-auto mt-2 flex w-full max-w-xl animate-fade-up flex-col gap-5 p-6 ${cardClass}`}
+        style={{ animationDelay: "120ms" }}
+      >
+        <div className="flex items-center gap-2 text-sm">
+          <span
+            className={`size-2 rounded-full ${hasStoredPat ? "bg-emerald-500" : "bg-zinc-300 dark:bg-zinc-600"}`}
+          />
+          <span className="text-zinc-600 dark:text-zinc-400">
+            {hasStoredPat ? "A Personal Access Token is saved" : "No Personal Access Token saved yet"}
+          </span>
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          <label htmlFor="pat" className={fieldLabelClass}>
+            Personal Access Token
+          </label>
+          <div className="relative">
             <input
               id="pat"
-              type="password"
+              type={showPat ? "text" : "password"}
               autoComplete="off"
               value={pat}
               onChange={(event) => setPat(event.target.value)}
-              placeholder={hasStoredPat ? "PAT saved - leave blank to keep using it" : "Paste your Azure DevOps PAT"}
-              className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+              placeholder={hasStoredPat ? "Saved - leave blank to keep using it" : "Paste your Azure DevOps PAT"}
+              className={`${inputClass} pr-10`}
             />
-            <p className="text-xs text-zinc-500 dark:text-zinc-400">
-              {hasStoredPat
-                ? "Saved in an httpOnly cookie for up to 8h (not readable by page scripts). Type a new one to replace it."
-                : "Saved in an httpOnly cookie for up to 8h once you save - never exposed to page scripts."}
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <div className="flex flex-col gap-1">
-              <label htmlFor="org" className="text-sm font-medium text-black dark:text-zinc-50">
-                Organization
-              </label>
-              <input
-                id="org"
-                type="text"
-                value={org}
-                onChange={(event) => setOrg(event.target.value)}
-                placeholder="e.g. my-org"
-                className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label htmlFor="project" className="text-sm font-medium text-black dark:text-zinc-50">
-                Project
-              </label>
-              <input
-                id="project"
-                type="text"
-                value={project}
-                onChange={(event) => setProject(event.target.value)}
-                placeholder="e.g. my-project"
-                className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-            <div className="flex flex-col gap-1 sm:col-span-2">
-              <label htmlFor="team" className="text-sm font-medium text-black dark:text-zinc-50">
-                Team <span className="font-normal text-zinc-500 dark:text-zinc-400">(optional)</span>
-              </label>
-              <input
-                id="team"
-                type="text"
-                value={team}
-                onChange={(event) => setTeam(event.target.value)}
-                placeholder={`Defaults to "${project || "<project>"} Team"`}
-                className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={handleSave}
-              disabled={!canSave}
-              className="h-10 rounded bg-black px-4 text-sm font-medium text-white disabled:opacity-40 dark:bg-white dark:text-black"
+              onClick={() => setShowPat((visible) => !visible)}
+              aria-label={showPat ? "Hide token" : "Show token"}
+              className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700 dark:hover:bg-zinc-800 dark:hover:text-zinc-200"
             >
-              {isSaving ? "Saving…" : "Save"}
+              {showPat ? <EyeOffIcon className="size-4" /> : <EyeIcon className="size-4" />}
             </button>
-            {savedAt && <p className="text-sm text-green-700 dark:text-green-400">Saved.</p>}
           </div>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
+            {hasStoredPat
+              ? "Kept in an httpOnly cookie for up to 8 h, never readable by page scripts. Type a new one to replace it."
+              : "Kept in an httpOnly cookie for up to 8 h once you save, never readable by page scripts."}
+          </p>
+        </div>
 
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="org" className={fieldLabelClass}>
+              Organization
+            </label>
+            <input
+              id="org"
+              type="text"
+              value={org}
+              onChange={(event) => setOrg(event.target.value)}
+              placeholder="e.g. my-org"
+              className={inputClass}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="project" className={fieldLabelClass}>
+              Project
+            </label>
+            <input
+              id="project"
+              type="text"
+              value={project}
+              onChange={(event) => setProject(event.target.value)}
+              placeholder="e.g. my-project"
+              className={inputClass}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5 sm:col-span-2">
+            <label htmlFor="team" className={fieldLabelClass}>
+              Team <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <input
+              id="team"
+              type="text"
+              value={team}
+              onChange={(event) => setTeam(event.target.value)}
+              placeholder={`Defaults to "${project || "<project>"} Team"`}
+              className={inputClass}
+            />
+          </div>
+        </div>
+
+        {saveError && (
+          <p role="alert" className="flex animate-fade-up items-center gap-1.5 text-sm text-red-600 dark:text-red-400">
+            <AlertIcon className="size-4 shrink-0" />
+            {saveError}
+          </p>
+        )}
+
+        <div className="flex flex-wrap items-center gap-3 border-t border-zinc-100 pt-5 dark:border-zinc-800">
+          <button type="submit" disabled={!canSave} className={`${primaryButtonClass} h-10 px-5`}>
+            {isSaving && <SpinnerIcon className="size-4 animate-spin" />}
+            {isSaving ? "Saving" : "Save connection"}
+          </button>
+          {savedAt && (
+            <span
+              key={savedAt}
+              className="inline-flex animate-pop items-center gap-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400"
+            >
+              <CheckIcon className="size-4" />
+              Saved
+            </span>
+          )}
           {hasStoredPat && (
             <button
               type="button"
               onClick={handleForgetSession}
-              className="self-start text-xs font-medium text-zinc-600 underline underline-offset-2 hover:text-black dark:text-zinc-300 dark:hover:text-zinc-50"
+              className="ml-auto inline-flex h-9 items-center rounded-lg px-3 text-sm font-medium text-red-600 transition hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-950/40 dark:hover:text-red-300"
             >
-              Forget saved PAT / Organization / Project / Team
+              Forget connection
             </button>
           )}
-
-          {saveError && <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p>}
-        </section>
-      </main>
-    </div>
+        </div>
+      </form>
+    </PageShell>
   );
 }

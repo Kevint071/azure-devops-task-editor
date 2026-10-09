@@ -9,12 +9,17 @@ export function AssigneeCombobox({
   value,
   onChange,
   placeholder,
+  dropUp = false,
+  inputClassName = "w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50",
 }: {
   id?: string;
   assignees: Assignee[];
   value: string;
   onChange: (uniqueName: string) => void;
   placeholder?: string;
+  // Opens the list above the input, for inputs near the bottom of the window.
+  dropUp?: boolean;
+  inputClassName?: string;
 }) {
   const selected = assignees.find((assignee) => assignee.uniqueName === value) ?? null;
   const [query, setQuery] = useState(selected?.displayName ?? "");
@@ -46,10 +51,12 @@ export function AssigneeCombobox({
         onBlur={() => setTimeout(() => setIsOpen(false), 150)}
         placeholder={placeholder}
         autoComplete="off"
-        className="w-full rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+        className={inputClassName}
       />
       {isOpen && (
-        <ul className="absolute z-10 mt-1 max-h-48 w-full overflow-auto rounded border border-zinc-300 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900">
+        <ul
+          className={`absolute z-10 ${dropUp ? "bottom-full mb-1" : "mt-1"} max-h-48 w-full overflow-auto rounded border border-zinc-300 bg-white text-sm shadow-lg dark:border-zinc-700 dark:bg-zinc-900`}
+        >
           {filtered.length === 0 ? (
             <li className="px-3 py-1.5 text-zinc-500 dark:text-zinc-400">No matches</li>
           ) : (
