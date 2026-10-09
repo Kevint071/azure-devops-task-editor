@@ -39,6 +39,16 @@ function buildPatchOperations(fields: BulkUpdateFields): JsonPatchOperation[] {
       value: fields.completedWork,
     });
   }
+  if (fields.areaPath !== undefined) {
+    operations.push({ op: "add", path: "/fields/System.AreaPath", value: fields.areaPath });
+  }
+  if (fields.iterationPath !== undefined) {
+    operations.push({
+      op: "add",
+      path: "/fields/System.IterationPath",
+      value: fields.iterationPath,
+    });
+  }
   return operations;
 }
 
@@ -55,15 +65,27 @@ function isValidPerTaskUpdate(value: unknown): value is PerTaskFieldUpdate {
   const record = value as Record<string, unknown>;
   if (typeof record.id !== "number" || !Number.isFinite(record.id)) return false;
 
-  const fieldKeys = ["state", "assignedTo", "originalEstimate", "completedWork"] as const;
+  const fieldKeys = [
+    "state",
+    "assignedTo",
+    "originalEstimate",
+    "completedWork",
+    "areaPath",
+    "iterationPath",
+  ] as const;
   if (fieldKeys.every((key) => record[key] === undefined)) return false;
 
   return (
     isOptionalNonEmptyString(record.state) &&
     isOptionalNonEmptyString(record.assignedTo) &&
     isOptionalHours(record.originalEstimate) &&
-    isOptionalHours(record.completedWork)
+    isOptionalHours(record.completedWork) &&
+    hasValidPaths(record)
   );
+}
+
+function hasValidPaths(record: Record<string, unknown>) {
+  return isOptionalNonEmptyString(record.areaPath) && isOptionalNonEmptyString(record.iterationPath);
 }
 
 async function applyPatches(
@@ -133,7 +155,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            "Each update must include a Task id and at least one field; hours must be numbers >= 0.",
+            "Each update must include a Task id and at least one field; hours must be numbers >= 0 and Area/Iteration paths non-empty strings.",
         },
         { status: 400 }
       );
@@ -152,6 +174,12 @@ export async function PATCH(request: NextRequest) {
   const ids = payload.ids;
   if (!Array.isArray(ids) || ids.length === 0 || !ids.every((id) => Number.isFinite(id))) {
     return NextResponse.json({ error: "At least one Task id is required." }, { status: 400 });
+  }
+  if (!hasValidPaths(payload as Record<string, unknown>)) {
+    return NextResponse.json(
+      { error: "Area and Iteration paths must be non-empty strings." },
+      { status: 400 }
+    );
   }
 
   const patchOperations = buildPatchOperations(payload);

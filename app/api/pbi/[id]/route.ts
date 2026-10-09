@@ -16,6 +16,8 @@ const TASK_FIELDS = [
   "System.AssignedTo",
   "Microsoft.VSTS.Scheduling.OriginalEstimate",
   "Microsoft.VSTS.Scheduling.CompletedWork",
+  "System.AreaPath",
+  "System.IterationPath",
 ];
 
 function asString(value: unknown): string {
@@ -59,6 +61,8 @@ export async function GET(
       id: pbi.id,
       title: asString(pbi.fields["System.Title"]),
       state: asString(pbi.fields["System.State"]),
+      areaPath: asString(pbi.fields["System.AreaPath"]),
+      iterationPath: asString(pbi.fields["System.IterationPath"]),
     };
 
     const childIds = (pbi.relations ?? [])
@@ -88,6 +92,8 @@ export async function GET(
           workItem.fields["Microsoft.VSTS.Scheduling.OriginalEstimate"]
         ),
         completedWork: asNumber(workItem.fields["Microsoft.VSTS.Scheduling.CompletedWork"]),
+        areaPath: asString(workItem.fields["System.AreaPath"]),
+        iterationPath: asString(workItem.fields["System.IterationPath"]),
       };
     });
 

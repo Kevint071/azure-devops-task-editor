@@ -12,6 +12,7 @@ import type {
   PbiSummary,
   PerTaskFieldUpdate,
   TaskItem,
+  TeamIteration,
 } from "./types";
 
 const PAT_HEADER = "x-ado-pat";
@@ -48,6 +49,12 @@ export function fetchTaskStates(pat: string): Promise<{ states: string[] }> {
 
 export function fetchAssignees(pat: string): Promise<{ assignees: Assignee[] }> {
   return apiRequest(pat, "/api/assignees");
+}
+
+export function fetchTeamPaths(
+  pat: string
+): Promise<{ areas: string[]; iterations: TeamIteration[] }> {
+  return apiRequest(pat, "/api/team-paths");
 }
 
 export function submitBulkUpdate(

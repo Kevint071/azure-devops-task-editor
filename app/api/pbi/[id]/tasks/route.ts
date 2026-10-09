@@ -25,7 +25,39 @@ function isValidNewTaskInput(value: unknown): value is NewTaskInput {
   if (record.assignedTo !== undefined && typeof record.assignedTo !== "string") return false;
   if (record.originalEstimate !== undefined && typeof record.originalEstimate !== "number") return false;
   if (record.completedWork !== undefined && typeof record.completedWork !== "number") return false;
+  if (!isOptionalNonEmptyString(record.areaPath)) return false;
+  if (!isOptionalNonEmptyString(record.iterationPath)) return false;
   return true;
+}
+
+function isOptionalNonEmptyString(value: unknown) {
+  return value === undefined || (typeof value === "string" && value.trim() !== "");
+}
+
+interface ParentPaths {
+  areaPath?: string;
+  iterationPath?: string;
+}
+
+// Read once per request, only when some Task leaves Area or Iteration out.
+async function fetchParentPaths(
+  pat: string,
+  org: string,
+  project: string,
+  parentId: number
+): Promise<ParentPaths> {
+  const parent = await adoRequest<AdoWorkItem>(
+    pat,
+    org,
+    `/${project}/_apis/wit/workitems/${parentId}?fields=System.AreaPath,System.IterationPath`
+  );
+  const areaPath = parent.fields["System.AreaPath"];
+  const iterationPath = parent.fields["System.IterationPath"];
+  return {
+    areaPath: typeof areaPath === "string" && areaPath !== "" ? areaPath : undefined,
+    iterationPath:
+      typeof iterationPath === "string" && iterationPath !== "" ? iterationPath : undefined,
+  };
 }
 
 function buildCreateOperations(
@@ -56,6 +88,12 @@ function buildCreateOperations(
       path: "/fields/Microsoft.VSTS.Scheduling.CompletedWork",
       value: task.completedWork,
     });
+  }
+  if (task.areaPath) {
+    operations.push({ op: "add", path: "/fields/System.AreaPath", value: task.areaPath });
+  }
+  if (task.iterationPath) {
+    operations.push({ op: "add", path: "/fields/System.IterationPath", value: task.iterationPath });
   }
   operations.push({
     op: "add",
@@ -93,16 +131,36 @@ export async function POST(
   const tasks = payload.tasks;
   if (!Array.isArray(tasks) || tasks.length === 0 || !tasks.every(isValidNewTaskInput)) {
     return NextResponse.json(
-      { error: "At least one new Task with a title is required." },
+      {
+        error:
+          "At least one new Task with a title is required; Area/Iteration paths must be non-empty strings.",
+      },
       { status: 400 }
     );
   }
 
   const { org, project } = resolveAdoConfig(request);
+
+  let parentPaths: ParentPaths = {};
+  if (tasks.some((task) => !task.areaPath || !task.iterationPath)) {
+    try {
+      parentPaths = await fetchParentPaths(pat, org, project, parentId);
+    } catch (error) {
+      // Without the parent's values the Tasks would land in the project root.
+      const { status, body } = toApiError(error);
+      return NextResponse.json(body, { status });
+    }
+  }
+  const resolvedTasks: NewTaskInput[] = tasks.map((task) => ({
+    ...task,
+    areaPath: task.areaPath ?? parentPaths.areaPath,
+    iterationPath: task.iterationPath ?? parentPaths.iterationPath,
+  }));
+
   const results: CreateTaskResult[] = [];
 
-  for (let i = 0; i < tasks.length; i += CONCURRENCY_LIMIT) {
-    const chunk = tasks.slice(i, i + CONCURRENCY_LIMIT);
+  for (let i = 0; i < resolvedTasks.length; i += CONCURRENCY_LIMIT) {
+    const chunk = resolvedTasks.slice(i, i + CONCURRENCY_LIMIT);
     const settled = await Promise.allSettled(
       chunk.map((task) =>
         adoRequest<AdoWorkItem>(pat, org, `/${project}/_apis/wit/workitems/$Task`, {
