@@ -1,13 +1,20 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createTasks } from "@/lib/api-client";
 import { usePbiLookup } from "@/lib/use-pbi-lookup";
 import { useSessionInfo } from "@/lib/use-session-info";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
+import {
+  PathSelect,
+  areaOptions,
+  iterationOptions,
+  shortPath,
+} from "@/app/components/PathSelect";
 import { SettingsPrompt } from "@/app/components/SettingsPrompt";
 
+// Empty areaPath / iterationPath means "inherit from the parent PBI".
 interface DraftTask {
   tempId: string;
   title: string;
@@ -15,6 +22,8 @@ interface DraftTask {
   assignedTo: string;
   originalEstimate: string;
   completedWork: string;
+  areaPath: string;
+  iterationPath: string;
   error?: string;
 }
 
@@ -28,21 +37,34 @@ export default function CreateTasksPage() {
     pbiInfo,
     taskStates,
     assignees,
+    areas,
+    iterations,
     canLookUp,
     handleLookup,
   } = usePbiLookup();
+  const teamAreaOptions = useMemo(() => areaOptions(areas), [areas]);
+  const teamIterationOptions = useMemo(() => iterationOptions(iterations), [iterations]);
 
   const [draftTasks, setDraftTasks] = useState<DraftTask[]>([]);
   const [hoursAssignMode, setHoursAssignMode] = useState(false);
   const [stateValue, setStateValue] = useState("");
   const [assigneeValue, setAssigneeValue] = useState("");
+  const [areaValue, setAreaValue] = useState("");
+  const [iterationValue, setIterationValue] = useState("");
   const [isCreatingTasks, setIsCreatingTasks] = useState(false);
   const [createTasksError, setCreateTasksError] = useState<string | null>(null);
   const [createdCount, setCreatedCount] = useState(0);
 
   const canCreateTasks =
     draftTasks.length > 0 && draftTasks.every((draft) => draft.title.trim() !== "") && !isCreatingTasks;
-  const hasAnyFieldSet = stateValue !== "" || assigneeValue !== "";
+  const hasAnyFieldSet =
+    stateValue !== "" || assigneeValue !== "" || areaValue !== "" || iterationValue !== "";
+  const inheritedAreaLabel = pbiInfo?.areaPath
+    ? `(from PBI: ${shortPath(pbiInfo.areaPath)})`
+    : "(from PBI)";
+  const inheritedIterationLabel = pbiInfo?.iterationPath
+    ? `(from PBI: ${shortPath(pbiInfo.iterationPath)})`
+    : "(from PBI)";
   const canApplyToDrafts = draftTasks.length > 0 && hasAnyFieldSet;
 
   async function handleLookupAndReset() {
@@ -62,6 +84,8 @@ export default function CreateTasksPage() {
         assignedTo: "",
         originalEstimate: "",
         completedWork: "",
+        areaPath: "",
+        iterationPath: "",
       },
     ]);
   }
@@ -89,6 +113,8 @@ export default function CreateTasksPage() {
         ...draft,
         state: stateValue !== "" ? stateValue : draft.state,
         assignedTo: assigneeValue !== "" ? assigneeValue : draft.assignedTo,
+        areaPath: areaValue !== "" ? areaValue : draft.areaPath,
+        iterationPath: iterationValue !== "" ? iterationValue : draft.iterationPath,
         error: undefined,
       }))
     );
@@ -110,6 +136,8 @@ export default function CreateTasksPage() {
           assignedTo: draft.assignedTo || undefined,
           originalEstimate: draft.originalEstimate !== "" ? Number(draft.originalEstimate) : undefined,
           completedWork: draft.completedWork !== "" ? Number(draft.completedWork) : undefined,
+          areaPath: draft.areaPath || undefined,
+          iterationPath: draft.iterationPath || undefined,
         }))
       );
 
@@ -196,7 +224,7 @@ export default function CreateTasksPage() {
                   {draftTasks.map((draft) => (
                     <li
                       key={draft.tempId}
-                      className="flex flex-col gap-2 rounded border border-zinc-200 p-2 dark:border-zinc-800 sm:flex-row sm:items-start"
+                      className="flex flex-col gap-2 rounded border border-zinc-200 p-2 dark:border-zinc-800 sm:flex-row sm:flex-wrap sm:items-start"
                     >
                       <div className="flex flex-1 flex-col gap-1">
                         <label className="sr-only" htmlFor={`draft-title-${draft.tempId}`}>
@@ -295,6 +323,26 @@ export default function CreateTasksPage() {
                       >
                         ✕
                       </button>
+
+                      {/* basis-full wraps Area/Iteration onto their own line so the main row doesn't get wider */}
+                      <div className="grid grid-cols-1 gap-2 sm:basis-full sm:grid-cols-2">
+                        <PathSelect
+                          ariaLabel="New Task area"
+                          value={draft.areaPath}
+                          onChange={(path) => updateDraftTask(draft.tempId, { areaPath: path })}
+                          options={teamAreaOptions}
+                          emptyLabel={inheritedAreaLabel}
+                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                        />
+                        <PathSelect
+                          ariaLabel="New Task iteration"
+                          value={draft.iterationPath}
+                          onChange={(path) => updateDraftTask(draft.tempId, { iterationPath: path })}
+                          options={teamIterationOptions}
+                          emptyLabel={inheritedIterationLabel}
+                          className="rounded border border-zinc-300 bg-white px-2 py-1.5 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                        />
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -329,6 +377,34 @@ export default function CreateTasksPage() {
                       value={assigneeValue}
                       onChange={setAssigneeValue}
                       placeholder="(unchanged) - type a name…"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="area" className="text-sm font-medium text-black dark:text-zinc-50">
+                      Area
+                    </label>
+                    <PathSelect
+                      id="area"
+                      value={areaValue}
+                      onChange={setAreaValue}
+                      options={teamAreaOptions}
+                      emptyLabel="(unchanged)"
+                      className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                    />
+                  </div>
+
+                  <div className="flex flex-col gap-1">
+                    <label htmlFor="iteration" className="text-sm font-medium text-black dark:text-zinc-50">
+                      Iteration
+                    </label>
+                    <PathSelect
+                      id="iteration"
+                      value={iterationValue}
+                      onChange={setIterationValue}
+                      options={teamIterationOptions}
+                      emptyLabel="(unchanged)"
+                      className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                     />
                   </div>
                 </div>

@@ -3,8 +3,8 @@
 // empty PAT header, and the server falls back to the httpOnly session cookie
 // saved from the Settings page (see lib/azure-devops/session.ts).
 import { useState } from "react";
-import { fetchAssignees, fetchPbiTasks, fetchTaskStates } from "./api-client";
-import type { Assignee, PbiSummary, TaskItem } from "./types";
+import { fetchAssignees, fetchPbiTasks, fetchTaskStates, fetchTeamPaths } from "./api-client";
+import type { Assignee, PbiSummary, TaskItem, TeamIteration } from "./types";
 
 export function usePbiLookup() {
   const [pbiId, setPbiId] = useState("");
@@ -18,6 +18,8 @@ export function usePbiLookup() {
   const [tasks, setTasks] = useState<TaskItem[] | null>(null);
   const [taskStates, setTaskStates] = useState<string[]>([]);
   const [assignees, setAssignees] = useState<Assignee[]>([]);
+  const [areas, setAreas] = useState<string[]>([]);
+  const [iterations, setIterations] = useState<TeamIteration[]>([]);
 
   const canLookUp = pbiId.trim() !== "" && !isLookingUp;
 
@@ -30,16 +32,19 @@ export function usePbiLookup() {
     setTasks(null);
 
     try {
-      const [pbiResult, statesResult, assigneesResult] = await Promise.all([
+      const [pbiResult, statesResult, assigneesResult, teamPathsResult] = await Promise.all([
         fetchPbiTasks("", pbiId.trim()),
         fetchTaskStates(""),
         fetchAssignees(""),
+        fetchTeamPaths(""),
       ]);
       setLookedUpPbiId(pbiId.trim());
       setPbiInfo(pbiResult.pbi);
       setTasks(pbiResult.tasks);
       setTaskStates(statesResult.states);
       setAssignees(assigneesResult.assignees);
+      setAreas(teamPathsResult.areas);
+      setIterations(teamPathsResult.iterations);
     } catch (error) {
       setLookupError(error instanceof Error ? error.message : "Unexpected error.");
     } finally {
@@ -77,6 +82,8 @@ export function usePbiLookup() {
     tasks,
     taskStates,
     assignees,
+    areas,
+    iterations,
     canLookUp,
     handleLookup,
     handleRefresh,

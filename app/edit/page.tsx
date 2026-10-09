@@ -7,6 +7,7 @@ import { useSessionInfo } from "@/lib/use-session-info";
 import type { BulkTaskResult, PerTaskFieldUpdate, TaskItem } from "@/lib/types";
 import { AssigneeCombobox } from "@/app/components/AssigneeCombobox";
 import { PbiLookupBar } from "@/app/components/PbiLookupBar";
+import { PathSelect, areaOptions, iterationOptions } from "@/app/components/PathSelect";
 import { SettingsPrompt } from "@/app/components/SettingsPrompt";
 
 // Pending, unsaved edits for one Task. Hours are kept as the raw input text so
@@ -16,6 +17,8 @@ interface TaskDraft {
   assignedTo?: string;
   originalEstimate?: string;
   completedWork?: string;
+  areaPath?: string;
+  iterationPath?: string;
 }
 
 interface SaveResult extends BulkTaskResult {
@@ -62,6 +65,10 @@ function buildUpdate(task: TaskItem, draft: TaskDraft | undefined): PerTaskField
   if (completedWork !== undefined && completedWork !== task.completedWork) {
     update.completedWork = completedWork;
   }
+  if (draft.areaPath && draft.areaPath !== task.areaPath) update.areaPath = draft.areaPath;
+  if (draft.iterationPath && draft.iterationPath !== task.iterationPath) {
+    update.iterationPath = draft.iterationPath;
+  }
 
   return Object.keys(update).length > 1 ? update : null;
 }
@@ -99,10 +106,14 @@ export default function EditTasksPage() {
     tasks,
     taskStates,
     assignees,
+    areas,
+    iterations,
     canLookUp,
     handleLookup,
     handleRefresh,
   } = usePbiLookup();
+  const teamAreaOptions = useMemo(() => areaOptions(areas), [areas]);
+  const teamIterationOptions = useMemo(() => iterationOptions(iterations), [iterations]);
 
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
   const [assigneeFilter, setAssigneeFilter] = useState("");
@@ -113,11 +124,13 @@ export default function EditTasksPage() {
   const [bulkAssignee, setBulkAssignee] = useState("");
   const [bulkEstimate, setBulkEstimate] = useState("");
   const [bulkCompleted, setBulkCompleted] = useState("");
+  const [bulkArea, setBulkArea] = useState("");
+  const [bulkIteration, setBulkIteration] = useState("");
   const [fillNotice, setFillNotice] = useState<string | null>(null);
 
   const [taskColumnWidth, setTaskColumnWidth] = useState(260);
   const taskColumnResizeRef = useRef<{ startX: number; startWidth: number } | null>(null);
-  const taskGridTemplateColumns = `28px minmax(${taskColumnWidth}px, 1fr) 130px 190px 90px 90px`;
+  const taskGridTemplateColumns = `28px minmax(${taskColumnWidth}px, 1fr) 130px 190px 180px 180px 90px 90px`;
 
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -179,7 +192,12 @@ export default function EditTasksPage() {
   const canSave = pendingUpdates.length > 0 && !hasInvalidDraft && !isSubmitting;
 
   const hasBulkValue =
-    bulkState !== "" || bulkAssignee !== "" || bulkEstimate !== "" || bulkCompleted !== "";
+    bulkState !== "" ||
+    bulkAssignee !== "" ||
+    bulkEstimate !== "" ||
+    bulkCompleted !== "" ||
+    bulkArea !== "" ||
+    bulkIteration !== "";
   const hasInvalidBulkHours = isInvalidHours(bulkEstimate) || isInvalidHours(bulkCompleted);
   const canFill = selectedVisibleTasks.length > 0 && hasBulkValue && !hasInvalidBulkHours;
 
@@ -267,6 +285,8 @@ export default function EditTasksPage() {
         if (bulkState !== "") draft.state = bulkState;
         if (bulkAssignee !== "") draft.assignedTo = bulkAssignee;
         if (bulkCompleted !== "") draft.completedWork = bulkCompleted;
+        if (bulkArea !== "") draft.areaPath = bulkArea;
+        if (bulkIteration !== "") draft.iterationPath = bulkIteration;
         if (bulkEstimate !== "" && canEditOriginalEstimate(task.state)) {
           draft.originalEstimate = bulkEstimate;
         }
@@ -288,6 +308,8 @@ export default function EditTasksPage() {
     setBulkAssignee("");
     setBulkEstimate("");
     setBulkCompleted("");
+    setBulkArea("");
+    setBulkIteration("");
   }
 
   async function handleLookupAndReset() {
@@ -448,7 +470,7 @@ export default function EditTasksPage() {
             ) : (
               <div className="overflow-x-auto rounded border border-zinc-200 dark:border-zinc-800">
                 <div
-                  className="grid min-w-205 items-center gap-x-3 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
+                  className="grid min-w-300 items-center gap-x-3 border-b border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400"
                   style={{ gridTemplateColumns: taskGridTemplateColumns }}
                 >
                   <span />
@@ -462,6 +484,8 @@ export default function EditTasksPage() {
                   </span>
                   <span>State</span>
                   <span>Assignee</span>
+                  <span>Area</span>
+                  <span>Iteration</span>
                   <span>Estimate</span>
                   <span>Completed</span>
                 </div>
@@ -472,7 +496,7 @@ export default function EditTasksPage() {
                   </p>
                 )}
 
-                <ul className="flex min-w-205 flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
+                <ul className="flex min-w-300 flex-col divide-y divide-zinc-200 dark:divide-zinc-800">
                   {filteredTasks.map((task) => {
                     const draft = drafts[task.id];
                     const update = buildUpdate(task, draft);
@@ -553,6 +577,32 @@ export default function EditTasksPage() {
                               </option>
                             ))}
                           </select>
+                        </div>
+                        <div className="flex h-full min-h-8.5 items-center">
+                          <PathSelect
+                            ariaLabel={`Area for task #${task.id}`}
+                            value={draft?.areaPath || task.areaPath}
+                            onChange={(path) => updateDraft(task.id, "areaPath", path)}
+                            options={teamAreaOptions}
+                            title={
+                              update?.areaPath !== undefined ? `Was: ${task.areaPath}` : undefined
+                            }
+                            className={cellInputClass(update?.areaPath !== undefined)}
+                          />
+                        </div>
+                        <div className="flex h-full min-h-8.5 items-center">
+                          <PathSelect
+                            ariaLabel={`Iteration for task #${task.id}`}
+                            value={draft?.iterationPath || task.iterationPath}
+                            onChange={(path) => updateDraft(task.id, "iterationPath", path)}
+                            options={teamIterationOptions}
+                            title={
+                              update?.iterationPath !== undefined
+                                ? `Was: ${task.iterationPath}`
+                                : undefined
+                            }
+                            className={cellInputClass(update?.iterationPath !== undefined)}
+                          />
                         </div>
                         <div className="flex h-full min-h-8.5 items-center">
                           <input
@@ -678,6 +728,34 @@ export default function EditTasksPage() {
                         onChange={(event) => setBulkCompleted(event.target.value)}
                         placeholder="—"
                         className={`${cellInputClass(false, isInvalidHours(bulkCompleted))} py-2`}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="bulk-area" className="text-xs text-zinc-600 dark:text-zinc-400">
+                        Area
+                      </label>
+                      <PathSelect
+                        id="bulk-area"
+                        value={bulkArea}
+                        onChange={setBulkArea}
+                        options={teamAreaOptions}
+                        emptyLabel="(unchanged)"
+                        className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label htmlFor="bulk-iteration" className="text-xs text-zinc-600 dark:text-zinc-400">
+                        Iteration
+                      </label>
+                      <PathSelect
+                        id="bulk-iteration"
+                        value={bulkIteration}
+                        onChange={setBulkIteration}
+                        options={teamIterationOptions}
+                        emptyLabel="(unchanged)"
+                        className="rounded border border-zinc-300 bg-white px-3 py-2 text-sm text-black dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50"
                       />
                     </div>
                   </div>
