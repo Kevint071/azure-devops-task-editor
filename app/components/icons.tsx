@@ -120,6 +120,15 @@ export function SlidersIcon({ className }: { className?: string }) {
   );
 }
 
+export function PlugIcon({ className }: { className?: string }) {
+  return (
+    <Icon className={className}>
+      <path d="M9 2v6M15 2v6M6 8h12v4a6 6 0 0 1-12 0Z" />
+      <path d="M12 18v4" />
+    </Icon>
+  );
+}
+
 export function TrashIcon({ className }: { className?: string }) {
   return (
     <Icon className={className}>
